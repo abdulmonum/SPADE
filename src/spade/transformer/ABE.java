@@ -1,6 +1,5 @@
 package spade.transformer;
 
-import org.apache.commons.codec.Charsets;
 import org.apache.commons.codec.binary.Hex;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -10,8 +9,10 @@ import spade.core.AbstractTransformer;
 import spade.core.AbstractVertex;
 import spade.core.Graph;
 import spade.core.Settings;
-import spade.reporter.audit.OPMConstants;
 import spade.utility.ABEGraph;
+import spade.utility.ABEGraph.AnnotationValue;
+import spade.utility.ABEGraph.EncryptedVertex;
+import spade.utility.ABEGraph.EncryptedEdge;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -20,9 +21,15 @@ import javax.crypto.spec.SecretKeySpec;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -37,24 +44,26 @@ public class ABE extends AbstractTransformer
     private static final String HIGH = "high";
     private static final String BASE_ALGORITHM = "AES";
     private static final String KEYS_DIRECTORY = "keysDirectory";
+    private static final String ENCRYPT_METHOD = "encrypt";
+    private static final String DECRYPT_METHOD = "decrypt";
+    private static final String CLASS_PREFIX = "spade.utility.ABEGraph$";
     private File KEYS_DIR;
-    private static final String EDGE = "Edge";
     private static final String ALGORITHM = "AES/ECB/PKCS5Padding";
     private static final Logger logger = Logger.getLogger(ABE.class.getName());
 
-    private List<String> lowAnnotations = new ArrayList<>();
-    private List<String> mediumAnnotations = new ArrayList<>();
-    private List<String> highAnnotations = new ArrayList<>();
-    private Map<String, List<String>> functionMap = new HashMap<>();
+    private final List<String> lowAnnotations = new ArrayList<>();
+    private final List<String> mediumAnnotations = new ArrayList<>();
+    private final List<String> highAnnotations = new ArrayList<>();
+    private final Map<String, String> classMap = new HashMap<>();
 
-    private class SecretKeys
+    private static class SecretKeys
     {
         SecretKey low;
         SecretKey medium;
         SecretKey high;
     }
 
-    private class Ciphers
+    private static class Ciphers
     {
         Cipher low;
         Cipher medium;
@@ -95,7 +104,7 @@ public class ABE extends AbstractTransformer
         {
             String keyDirectoryPath = null;
             String level = null;
-            List<String> lines = FileUtils.readLines(new File(configFileName), Charsets.UTF_8);
+            List<String> lines = FileUtils.readLines(new File(configFileName), StandardCharsets.UTF_8);
             for (String line : lines)
             {
                 line = line.trim();
@@ -121,26 +130,20 @@ public class ABE extends AbstractTransformer
                     }
                     else
                     {
+                        assert (level != null);
                         List<String> annotations = new ArrayList<>();
                         String[] annotationsList = line.split(",");
-                        assert (level != null);
+                        assert(annotationsList.length > 0);
                         for (String annotation : annotationsList)
                         {
-                            String substr = StringUtils.substringBetween(annotation, "[", "]");
+                            String cleanAnnotation = annotation.trim();
+                            String substr = StringUtils.substringBetween(cleanAnnotation, "[", "]");
                             if (substr != null)
                             {
-                                String[] handles = substr.split(":");
-                                assert (handles.length == 2);
-                                String encryptFunction = handles[0];
-                                String decryptFunction = handles[1];
-                                annotation = annotation.substring(0, annotation.indexOf("["));
-                                functionMap.put(annotation, Arrays.asList(encryptFunction, decryptFunction));
-                                annotations.add(annotation);
+                                cleanAnnotation = cleanAnnotation.substring(0, cleanAnnotation.indexOf("[")).trim();
+                                classMap.put(cleanAnnotation, substr.trim());
                             }
-                            else
-                            {
-                                annotations.add(annotation);
-                            }
+                            annotations.add(cleanAnnotation);
                         }
                         switch (level)
                         {
@@ -212,58 +215,7 @@ public class ABE extends AbstractTransformer
         return secretKeys;
     }
 
-    private String decryptIpAddress(String key, String encryptedValue, Cipher cipher, String level)
-    {
-        String[] subnets = encryptedValue.split("\\.");
-        String decryptedValue;
-        switch (level)
-        {
-            case LOW:
-                subnets[1] = decryptAnnotation(key, subnets[1], cipher);
-                break;
-            case MEDIUM:
-                subnets[2] = decryptAnnotation(key, subnets[2], cipher);
-                break;
-            case HIGH:
-                subnets[3] = decryptAnnotation(key, subnets[3], cipher);
-                break;
-        }
-        decryptedValue = String.join(".", subnets);
-        return decryptedValue;
-    }
-
-    private String decryptPath(String key, String encryptedValue, Cipher cipher, String level)
-    {
-        String[] subpaths = encryptedValue.split(FILE_SEPARATOR, 5);
-        int numpaths = subpaths.length;
-        String decryptedValue;
-        switch (level)
-        {
-            case LOW:
-                if (numpaths > 2)
-                {
-                    subpaths[2] = decryptAnnotation(key, subpaths[2], cipher);
-                }
-                break;
-            case MEDIUM:
-                if (numpaths > 3)
-                {
-                    subpaths[3] = decryptAnnotation(key, subpaths[3], cipher);
-                }
-                break;
-            case HIGH:
-                if (numpaths > 4)
-                {
-                    subpaths[4] = decryptAnnotation(key, subpaths[4], cipher);
-                }
-                break;
-        }
-        decryptedValue = String.join(FILE_SEPARATOR, subpaths);
-        return decryptedValue;
-    }
-
-
-    private String decryptAnnotation(String key, String encryptedValue, Cipher cipher)
+    public static String decryptAnnotation(String key, String encryptedValue, Cipher cipher)
     {
         if (encryptedValue == null)
             return null;
@@ -283,7 +235,7 @@ public class ABE extends AbstractTransformer
         return encryptedValue;
     }
 
-    private void decryptAnnotations(AbstractVertex vertex, List<String> keys, Cipher cipher, String level)
+    private void decryptAnnotations(EncryptedVertex vertex, List<String> keys, Cipher cipher, String level)
     {
         for (String key : keys)
         {
@@ -291,20 +243,26 @@ public class ABE extends AbstractTransformer
             String decryptedValue;
             if (encryptedValue != null)
             {
-                List<String> functions = functionMap.get(key);
-                if (functions != null)
+                String className = classMap.get(key);
+                if (className != null)
                 {
-                    String decryptMethod = functions.get(1);
-                    Method method;
                     try
                     {
-                        method = ABE.class.getDeclaredMethod(decryptMethod, String.class, String.class,
-                                Cipher.class, String.class);
-                        decryptedValue = (String) method.invoke(this, key, encryptedValue, cipher, level);
+                        Method method;
+                        className = CLASS_PREFIX + className;
+                        Class<?> decryptionClass = Class.forName(className);
+                        Constructor<?> classConstructor = decryptionClass.getDeclaredConstructor(String.class);
+                        Object decryptionClassObj = classConstructor.newInstance(encryptedValue);
+                        method = decryptionClass.getDeclaredMethod(DECRYPT_METHOD, String.class, String.class,
+                                String.class, Cipher.class);
+                        decryptedValue = (String) method.invoke(decryptionClassObj, key, encryptedValue, level, cipher);
+                        vertex.addAnnotation(key, (AnnotationValue) decryptionClassObj);
                     }
                     catch (Exception ex)
                     {
-                        logger.log(Level.SEVERE, null, ex);
+                        // In case the decryption class is missing
+                        // Put the encryption string and flag
+                        logger.log(Level.SEVERE, "Decryption class not found for key '" + key + "'!", ex);
                         decryptedValue = encryptedValue;
                     }
                 }
@@ -317,7 +275,7 @@ public class ABE extends AbstractTransformer
         }
     }
 
-    private void decryptVertex(AbstractVertex vertex, Ciphers ciphers)
+    private void decryptVertex(EncryptedVertex vertex, Ciphers ciphers)
     {
         decryptAnnotations(vertex, this.highAnnotations, ciphers.high, HIGH);
         decryptAnnotations(vertex, this.mediumAnnotations, ciphers.medium, MEDIUM);
@@ -328,46 +286,11 @@ public class ABE extends AbstractTransformer
     {
         for (AbstractVertex vertex : graph.vertexSet())
         {
-            decryptVertex(vertex, ciphers);
+            decryptVertex((EncryptedVertex) vertex, ciphers);
         }
     }
 
-    private String decryptTime(String key, String encryptedValue, Cipher cipher, String level)
-    {
-        // parse individual units of time the timestamp
-        // time format is 'yyyy-MM-dd HH:mm:ss.SSS'
-        String regex = "[:\\-. ]";
-        String[] split = encryptedValue.split(regex);
-        String year = split[0];
-        String month = split[1];
-        String day = split[2];
-        String hour = split[3];
-        String minute = split[4];
-        String second = split[5];
-        String millisecond = split[6];
-
-        switch (level)
-        {
-            case HIGH:
-                day = decryptAnnotation(key, day, cipher);
-                break;
-            case MEDIUM:
-                hour = decryptAnnotation(key, hour, cipher);
-                break;
-            case LOW:
-                minute = decryptAnnotation(key, minute, cipher);
-                second = decryptAnnotation(key, second, cipher);
-                millisecond = decryptAnnotation(key, millisecond, cipher);
-                break;
-        }
-
-        // stitch time with format is 'yyyy-MM-dd HH:mm:ss.SSS'
-        String timestamp = year + "-" + month + "-" + day + " " + hour + ":" +
-                minute + ":" + second + "." + millisecond;
-        return timestamp;
-    }
-
-    private void decryptAnnotations(AbstractEdge edge, List<String> keys, Cipher cipher, String level)
+    private void decryptAnnotations(EncryptedEdge edge, List<String> keys, Cipher cipher, String level)
     {
         for (String key : keys)
         {
@@ -375,20 +298,27 @@ public class ABE extends AbstractTransformer
             String decryptedValue;
             if (encryptedValue != null)
             {
-                List<String> functions = functionMap.get(key);
-                if (functions != null)
+                String className = classMap.get(key);
+                if (className != null)
                 {
-                    String decryptMethod = functions.get(1);
-                    Method method;
                     try
                     {
-                        method = ABE.class.getDeclaredMethod(decryptMethod, String.class, String.class,
-                                Cipher.class, String.class);
-                        decryptedValue = (String) method.invoke(this, key, encryptedValue, cipher, level);
+                        Method method;
+                        className = CLASS_PREFIX + className;
+                        Class<?> decryptionClass = Class.forName(className);
+                        Constructor<?> classConstructor = decryptionClass.getDeclaredConstructor(String.class);
+                        Object decryptionClassObj = classConstructor.newInstance(encryptedValue);
+                        method = decryptionClass.getDeclaredMethod(DECRYPT_METHOD, String.class, String.class,
+                                String.class, Cipher.class);
+                        decryptedValue = (String) method.invoke(decryptionClassObj, key,
+                                encryptedValue, level, cipher);
+                        edge.addAnnotation(key, (AnnotationValue) decryptionClassObj);
                     }
                     catch (Exception ex)
                     {
-                        logger.log(Level.SEVERE, null, ex);
+                        // In case the decryption class is missing
+                        // Put the encryption string and flag
+                        logger.log(Level.SEVERE, "Decryption class not found for key '" + key + "'!", ex);
                         decryptedValue = encryptedValue;
                     }
                 }
@@ -402,7 +332,7 @@ public class ABE extends AbstractTransformer
         }
     }
 
-    private void decryptEdge(AbstractEdge edge, Ciphers ciphers)
+    private void decryptEdge(EncryptedEdge edge, Ciphers ciphers)
     {
         decryptAnnotations(edge, this.highAnnotations, ciphers.high, HIGH);
         decryptAnnotations(edge, this.mediumAnnotations, ciphers.medium, MEDIUM);
@@ -413,7 +343,7 @@ public class ABE extends AbstractTransformer
     {
         for (AbstractEdge edge : graph.edgeSet())
         {
-            decryptEdge(edge, ciphers);
+            decryptEdge((EncryptedEdge) edge, ciphers);
         }
     }
 
@@ -517,7 +447,7 @@ public class ABE extends AbstractTransformer
         return decryptGraph(graph, symmetricKeys);
     }
 
-    private String encryptAnnotation(String key, String plainValue, Cipher cipher)
+    public static String encryptAnnotation(String key, String plainValue, Cipher cipher)
     {
         if (plainValue == null)
             return null;
@@ -532,7 +462,7 @@ public class ABE extends AbstractTransformer
         {
             String message = "Unable to encrypt value " + "'" + plainValue + "' of " +
                     "key '" + key + "'. " +
-                    "This would disturb any further encryption of annotations.";
+                    "This might disturb any further encryption of annotations.";
             logger.log(Level.WARNING, message, ex);
             return plainValue;
         }
@@ -598,93 +528,7 @@ public class ABE extends AbstractTransformer
         graph.setHighKey(high);
     }
 
-    private String encryptIpAddress(String key, String plainValue, String level)
-    {
-        String[] subnets = plainValue.split("\\.");
-        String encryptedValue;
-        switch (level)
-        {
-            case LOW:
-                subnets[1] = encryptAnnotation(key, subnets[1], this.cipher.low);
-                break;
-            case MEDIUM:
-                subnets[2] = encryptAnnotation(key, subnets[2], this.cipher.medium);
-                break;
-            case HIGH:
-                subnets[3] = encryptAnnotation(key, subnets[3], this.cipher.high);
-                break;
-        }
-        encryptedValue = String.join(".", subnets);
-        return encryptedValue;
-    }
-
-    private String encryptPath(String key, String plainValue, String level)
-    {
-        String[] subpaths = plainValue.split(FILE_SEPARATOR, 5);
-        String encryptedValue;
-        int numpaths = subpaths.length;
-        switch (level)
-        {
-            case LOW:
-                if (numpaths > 2)
-                {
-                    subpaths[2] = encryptAnnotation(key, subpaths[2], this.cipher.low);
-                }
-                break;
-            case MEDIUM:
-                if (numpaths > 3)
-                {
-                    subpaths[3] = encryptAnnotation(key, subpaths[3], this.cipher.medium);
-                }
-                break;
-            case HIGH:
-                if (numpaths > 4)
-                {
-                    subpaths[4] = encryptAnnotation(key, subpaths[4], this.cipher.high);
-                }
-                break;
-        }
-        encryptedValue = String.join(FILE_SEPARATOR, subpaths);
-        return encryptedValue;
-    }
-
-    private String encryptTime(String key, String plainValue, String level)
-    {
-        // parse individual units of time the timestamp
-        // time format is 'yyyy-MM-dd HH:mm:ss.SSS'
-        String regex = "[:\\-. ]";
-        String[] split = plainValue.split(regex);
-        String year = split[0];
-        String month = split[1];
-        String day = split[2];
-        String hour = split[3];
-        String minute = split[4];
-        String second = split[5];
-        String millisecond = split[6];
-
-        switch (level)
-        {
-            case HIGH:
-                day = encryptAnnotation(key, day, this.cipher.high);
-                break;
-            case MEDIUM:
-                hour = encryptAnnotation(key, hour, this.cipher.medium);
-                break;
-            case LOW:
-                minute = encryptAnnotation(key, minute, this.cipher.low);
-                second = encryptAnnotation(key, second, this.cipher.low);
-                millisecond = encryptAnnotation(key, millisecond, this.cipher.low);
-                break;
-        }
-
-        // stitch time with format is 'yyyy-MM-dd HH:mm:ss.SSS'
-        String timestamp = year + "-" + month + "-" + day + " " + hour + ":" +
-                minute + ":" + second + "." + millisecond;
-
-        return timestamp;
-    }
-
-    private void encryptAnnotations(AbstractVertex vertex, List<String> keys, Cipher cipher, String level)
+    private void encryptAnnotations(EncryptedVertex vertex, List<String> keys, Cipher cipher, String level)
     {
         for (String key : keys)
         {
@@ -692,19 +536,26 @@ public class ABE extends AbstractTransformer
             String encryptedValue;
             if (plainValue != null)
             {
-                List<String> functions = functionMap.get(key);
-                if (functions != null)
+                String className = classMap.get(key);
+                if (className != null)
                 {
-                    String encryptMethod = functions.get(0);
-                    Method method;
                     try
                     {
-                        method = ABE.class.getDeclaredMethod(encryptMethod, String.class, String.class, String.class);
-                        encryptedValue = (String) method.invoke(this, key, plainValue, level);
+                        Method method;
+                        className = CLASS_PREFIX + className;
+                        Class<?> encryptionClass = Class.forName(className);
+                        Constructor<?> classConstructor = encryptionClass.getDeclaredConstructor(String.class);
+                        Object encryptionClassObj = classConstructor.newInstance(plainValue);
+                        method = encryptionClass.getDeclaredMethod(ENCRYPT_METHOD, String.class, String.class,
+                                String.class, Cipher.class);
+                        encryptedValue = (String) method.invoke(encryptionClassObj, key, plainValue, level, cipher);
+                        vertex.addAnnotation(key, (AnnotationValue) encryptionClassObj);
                     }
                     catch (Exception ex)
                     {
-                        logger.log(Level.SEVERE, null, ex);
+                        // In case the encryption class is missing
+                        // Put the plain string and flag
+                        logger.log(Level.SEVERE, "Encryption class not found for key '" + key + "'!", ex);
                         encryptedValue = plainValue;
                     }
                 }
@@ -717,7 +568,7 @@ public class ABE extends AbstractTransformer
         }
     }
 
-    private void encryptAnnotations(AbstractEdge edge, List<String> keys, Cipher cipher, String level)
+    private void encryptAnnotations(EncryptedEdge edge, List<String> keys, Cipher cipher, String level)
     {
         for (String key : keys)
         {
@@ -725,19 +576,26 @@ public class ABE extends AbstractTransformer
             String encryptedValue;
             if (plainValue != null)
             {
-                List<String> functions = functionMap.get(key);
-                if (functions != null)
+                String className = classMap.get(key);
+                if (className != null)
                 {
-                    String encryptMethod = functions.get(0);
-                    Method method = null;
                     try
                     {
-                        method = ABE.class.getDeclaredMethod(encryptMethod, String.class, String.class, String.class);
-                        encryptedValue = (String) method.invoke(this, key, plainValue, level);
+                        Method method;
+                        className = CLASS_PREFIX + className;
+                        Class<?> encryptionClass = Class.forName(className);
+                        Constructor<?> classConstructor = encryptionClass.getDeclaredConstructor(String.class);
+                        Object encryptionClassObj = classConstructor.newInstance(plainValue);
+                        method = encryptionClass.getDeclaredMethod(ENCRYPT_METHOD, String.class, String.class,
+                                String.class, Cipher.class);
+                        encryptedValue = (String) method.invoke(encryptionClassObj, key, plainValue, level, cipher);
+                        edge.addAnnotation(key, (AnnotationValue) encryptionClassObj);
                     }
                     catch (Exception ex)
                     {
-                        logger.log(Level.SEVERE, null, ex);
+                        // In case the encryption class is missing
+                        // Put the plain string and flag
+                        logger.log(Level.SEVERE, "Encryption class not found for key '" + key + "'!", ex);
                         encryptedValue = plainValue;
                     }
                 }
@@ -754,13 +612,6 @@ public class ABE extends AbstractTransformer
     public ABEGraph transform(Graph graph, QueryMetaData queryMetaData)
     {
         ABEGraph encryptedGraph = ABEGraph.copy(graph, true);
-        Set<AbstractVertex> endPoints = new HashSet<>();
-        for (AbstractEdge edge : encryptedGraph.edgeSet())
-        {
-            endPoints.add(edge.getChildVertex());
-            endPoints.add(edge.getParentVertex());
-        }
-        endPoints.addAll(encryptedGraph.vertexSet());
 
         // generate 3 symmetric keys
         SecretKeys symmetricKeys = generateSymmetricKeys();
@@ -771,7 +622,6 @@ public class ABE extends AbstractTransformer
         }
         try
         {
-            // encrypt data
             this.cipher.low.init(Cipher.ENCRYPT_MODE, symmetricKeys.low);
             this.cipher.medium.init(Cipher.ENCRYPT_MODE, symmetricKeys.medium);
             this.cipher.high.init(Cipher.ENCRYPT_MODE, symmetricKeys.high);
@@ -781,7 +631,9 @@ public class ABE extends AbstractTransformer
             logger.log(Level.SEVERE, "Unable to initialize ciphers for encryption!");
         }
 
-        encryptVertices(endPoints);
+        // encrypt data
+//        encryptVertices(endPoints);
+        encryptVertices(encryptedGraph.vertexSet());
         encryptEdges(encryptedGraph.edgeSet());
 
         // encrypt the symmetric keys as per ABE
@@ -789,22 +641,22 @@ public class ABE extends AbstractTransformer
         return encryptedGraph;
     }
 
-    private void encryptEdges(Set<AbstractEdge> edgeSet)
-    {
-        for (AbstractEdge edge : edgeSet)
-        {
-            encryptEdge(edge);
-        }
-    }
-
-    private void encryptEdge(AbstractEdge edge)
+    private void encryptEdge(EncryptedEdge edge)
     {
         encryptAnnotations(edge, highAnnotations, this.cipher.high, HIGH);
         encryptAnnotations(edge, mediumAnnotations, this.cipher.medium, MEDIUM);
         encryptAnnotations(edge, lowAnnotations, this.cipher.low, LOW);
     }
 
-    private void encryptVertex(AbstractVertex vertex)
+    private void encryptEdges(Set<AbstractEdge> edgeSet)
+    {
+        for (AbstractEdge edge : edgeSet)
+        {
+            encryptEdge((EncryptedEdge) edge);
+        }
+    }
+
+    private void encryptVertex(EncryptedVertex vertex)
     {
         encryptAnnotations(vertex, this.highAnnotations, this.cipher.high, HIGH);
         encryptAnnotations(vertex, this.mediumAnnotations, this.cipher.medium, MEDIUM);
@@ -815,20 +667,21 @@ public class ABE extends AbstractTransformer
     {
         for (AbstractVertex vertex : vertexSet)
         {
-            encryptVertex(vertex);
+            encryptVertex((EncryptedVertex) vertex);
         }
     }
 
-    public static void main(String[] args)
-    {
-        Graph graph = Graph.importGraph("sample.dot");
-        System.out.println(graph);
-        ABE abe = new ABE();
-        abe.initialize("");
-        ABEGraph encryptedGraph = abe.transform(graph, null);
-        System.out.println(encryptedGraph);
-
-        ABEGraph decryptedGraph = abe.decryptGraph(encryptedGraph);
-        System.out.println(decryptedGraph);
-    }
+//    public static void main(String[] args)
+//    {
+//        Following is a test case for testing and verification
+//        Graph graph = Graph.importGraph("sample.dot");
+//        System.out.println("original graph:\n" + graph);
+//        ABE abe = new ABE();
+//        abe.initialize("");
+//        ABEGraph encryptedGraph = abe.transform(graph, null);
+//        System.out.println("encrypted graph:\n" + encryptedGraph);
+//
+//        ABEGraph decryptedGraph = abe.decryptGraph(encryptedGraph);
+//        System.out.println("decrypted graph:\n" + decryptedGraph);
+//    }
 }
