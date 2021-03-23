@@ -43,7 +43,7 @@ public abstract class AbstractEdge implements Serializable
 	/**
      * A map containing the annotations for this edge.
      */
-    protected Map<String, String> annotations = new TreeMap<>();
+    private Map<String, String> annotations = new TreeMap<>();
     private AbstractVertex childVertex;
     private AbstractVertex parentVertex;
 

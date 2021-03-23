@@ -11,6 +11,8 @@ import java.util.Calendar;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import static spade.core.Kernel.FILE_SEPARATOR;
 import static spade.transformer.ABE.encryptAnnotation;
@@ -25,6 +27,8 @@ public class ABEGraph extends Graph
 	private static final String LOW = "low";
 	private static final String MEDIUM = "medium";
 	private static final String HIGH = "high";
+
+	private static final Logger logger = Logger.getLogger(ABEGraph.class.getName());
 
 	public abstract static class AnnotationValue
 	{
@@ -318,21 +322,75 @@ public class ABEGraph extends Graph
 		@Override
 		public String encrypt(String key, String plainValue, String level, Cipher cipher)
 		{
+			boolean ipv6 = false;
 			String[] subnets = plainValue.split("\\.");
+			if(subnets.length <= 1)
+			{
+				// possibly an ipv6 address. e.g.,
+				// 2001:0db8:85a3:0000:0000:8a2e:0370:7334
+				subnets = plainValue.split(":");
+				if(subnets.length == 8)
+				{
+					ipv6 = true;
+				}
+				else
+				{
+					logger.log(Level.WARNING, "Malformed annotation value for IP address!");
+					return plainValue;
+				}
+			}
+			if(!ipv6 && subnets.length != 4)
+			{
+				logger.log(Level.WARNING, "Malformed annotation value for IP address!");
+				return plainValue;
+			}
 			String encryptedValue;
 			switch (level)
 			{
 				case LOW:
-					subnets[1] = encryptAnnotation(key, subnets[1], cipher);
+					if(ipv6)
+					{
+						subnets[2] = encryptAnnotation(key, subnets[2], cipher);
+						subnets[3] = encryptAnnotation(key, subnets[3], cipher);
+					}
+					else
+					{
+						subnets[1] = encryptAnnotation(key, subnets[1], cipher);
+					}
 					break;
 				case MEDIUM:
-					subnets[2] = encryptAnnotation(key, subnets[2], cipher);
+					if(ipv6)
+					{
+						subnets[4] = encryptAnnotation(key, subnets[4], cipher);
+						subnets[5] = encryptAnnotation(key, subnets[5], cipher);
+					}
+					else
+					{
+						subnets[2] = encryptAnnotation(key, subnets[2], cipher);
+					}
 					break;
 				case HIGH:
+				if(ipv6)
+				{
+					subnets[6] = encryptAnnotation(key, subnets[6], cipher);
+					subnets[7] = encryptAnnotation(key, subnets[7], cipher);
+				}
+				else
+				{
 					subnets[3] = encryptAnnotation(key, subnets[3], cipher);
+				}
 					break;
 			}
-			encryptedValue = String.join(".", subnets);
+			String sep;
+			if(ipv6)
+			{
+				sep = ":";
+			}
+			else
+			{
+				sep = ".";
+			}
+			encryptedValue = String.join(sep, subnets);
 			putAnnotationValue(encryptedValue);
 			return encryptedValue;
 		}
@@ -340,21 +398,75 @@ public class ABEGraph extends Graph
 		@Override
 		public String decrypt(String key, String encryptedValue, String level, Cipher cipher)
 		{
+			boolean ipv6 = false;
 			String[] subnets = encryptedValue.split("\\.");
+			if(subnets.length <= 1)
+			{
+				// possibly an ipv6 address. e.g.,
+				// 2001:0db8:85a3:0000:0000:8a2e:0370:7334
+				subnets = encryptedValue.split(":");
+				if(subnets.length == 8)
+				{
+					ipv6 = true;
+				}
+				else
+				{
+					logger.log(Level.WARNING, "Malformed annotation value for IP address!");
+					return encryptedValue;
+				}
+			}
+			if(!ipv6 && subnets.length != 4)
+			{
+				logger.log(Level.WARNING, "Malformed annotation value for IP address!");
+				return encryptedValue;
+			}
 			String decryptedValue;
 			switch (level)
 			{
 				case LOW:
-					subnets[1] = decryptAnnotation(key, subnets[1], cipher);
+					if(ipv6)
+					{
+						subnets[2] = decryptAnnotation(key, subnets[2], cipher);
+						subnets[3] = decryptAnnotation(key, subnets[3], cipher);
+					}
+					else
+					{
+						subnets[1] = decryptAnnotation(key, subnets[1], cipher);
+					}
 					break;
 				case MEDIUM:
-					subnets[2] = decryptAnnotation(key, subnets[2], cipher);
+					if(ipv6)
+					{
+						subnets[4] = decryptAnnotation(key, subnets[4], cipher);
+						subnets[5] = decryptAnnotation(key, subnets[5], cipher);
+					}
+					else
+					{
+						subnets[2] = decryptAnnotation(key, subnets[2], cipher);
+					}
 					break;
 				case HIGH:
-					subnets[3] = decryptAnnotation(key, subnets[3], cipher);
+					if(ipv6)
+					{
+						subnets[6] = decryptAnnotation(key, subnets[6], cipher);
+						subnets[7] = decryptAnnotation(key, subnets[7], cipher);
+					}
+					else
+					{
+						subnets[3] = decryptAnnotation(key, subnets[3], cipher);
+					}
 					break;
 			}
-			decryptedValue = String.join(".", subnets);
+			String sep;
+			if(ipv6)
+			{
+				sep = ":";
+			}
+			else
+			{
+				sep = ".";
+			}
+			decryptedValue = String.join(sep, subnets);
 			putAnnotationValue(decryptedValue);
 			return decryptedValue;
 		}
@@ -459,31 +571,6 @@ public class ABEGraph extends Graph
 	{
 		private final Map<String, AnnotationValue> encryptedAnnotations = new HashMap<>();
 
-		@Override
-		public Map<String, String> getAnnotations()
-		{
-			// getAnnotations creates annotations in String, String format
-			// lazily when requested by user
-			for(Map.Entry<String, AnnotationValue> encryptedAnnotation:
-					this.encryptedAnnotations.entrySet())
-			{
-				String key = encryptedAnnotation.getKey();
-				AnnotationValue annotationValue = encryptedAnnotation.getValue();
-				String value = annotationValue.getAnnotationValue();
-				annotations.put(key, value);
-			}
-			return this.annotations;
-		}
-
-		@Override
-		public String getAnnotation(String key)
-		{
-			AnnotationValue annotation = this.encryptedAnnotations.get(key);
-			if(annotation != null)
-				return annotation.getAnnotationValue();
-			return null;
-		}
-
 		public Map<String, AnnotationValue> getEncryptedAnnotations()
 		{
 			return encryptedAnnotations;
@@ -523,6 +610,7 @@ public class ABEGraph extends Graph
 					}
 					addAnnotation(key, encryptedTime);
 				}
+				super.addAnnotation(key, value.getAnnotationValue());
 			}
 		}
 
@@ -540,6 +628,7 @@ public class ABEGraph extends Graph
 						value = "";
 					}
 					this.encryptedAnnotations.put(key, new PlainString(value));
+					super.addAnnotation(key, value);
 				}
 			}
 		}
@@ -549,24 +638,12 @@ public class ABEGraph extends Graph
 		{
 			AnnotationValue annotationValue = this.encryptedAnnotations.get(key);
 			annotationValue.putAnnotationValue(value);
+			super.addAnnotation(key, value);
 		}
 
 		public void addAnnotation(String key, AnnotationValue value)
 		{
 			this.encryptedAnnotations.put(key, value);
-		}
-
-		public void addAnnotationPart(String key, String part, AnnotationValue value)
-		{
-			AnnotationValue annotation = this.encryptedAnnotations.get(key);
-			annotation.putAnnotationPart(part, value);
-		}
-
-		@Override
-		public String toString()
-		{
-			getAnnotations();
-			return super.toString();
 		}
 	}
 
@@ -580,31 +657,6 @@ public class ABEGraph extends Graph
 			setParentVertex(parentVertex);
 		}
 
-		@Override
-		public Map<String, String> getAnnotations()
-		{
-			// getAnnotations creates annotations in String, String format
-			// lazily when requested by user
-			for(Map.Entry<String, AnnotationValue> encryptedAnnotation:
-					this.encryptedAnnotations.entrySet())
-			{
-				String key = encryptedAnnotation.getKey();
-				AnnotationValue annotationValue = encryptedAnnotation.getValue();
-				String value = annotationValue.getAnnotationValue();
-				annotations.put(key, value);
-			}
-			return this.annotations;
-		}
-
-		@Override
-		public String getAnnotation(String key)
-		{
-			AnnotationValue annotation = this.encryptedAnnotations.get(key);
-			if(annotation != null)
-				return annotation.getAnnotationValue();
-			return null;
-		}
-
 		public Map<String, AnnotationValue> getEncryptedAnnotations()
 		{
 			return encryptedAnnotations;
@@ -644,6 +696,7 @@ public class ABEGraph extends Graph
 					}
 					addAnnotation(key, encryptedTime);
 				}
+				super.addAnnotation(key, value.getAnnotationValue());
 			}
 		}
 
@@ -661,6 +714,7 @@ public class ABEGraph extends Graph
 						value = "";
 					}
 					this.encryptedAnnotations.put(key, new PlainString(value));
+					super.addAnnotation(key, value);
 				}
 			}
 		}
@@ -670,24 +724,12 @@ public class ABEGraph extends Graph
 		{
 			AnnotationValue annotationValue = this.encryptedAnnotations.get(key);
 			annotationValue.putAnnotationValue(value);
+			super.addAnnotation(key, value);
 		}
 
 		public void addAnnotation(String key, AnnotationValue value)
 		{
 			this.encryptedAnnotations.put(key, value);
-		}
-
-		public void addAnnotationPart(String key, String part, AnnotationValue value)
-		{
-			AnnotationValue annotation = this.encryptedAnnotations.get(key);
-			annotation.putAnnotationPart(part, value);
-		}
-
-		@Override
-		public String toString()
-		{
-			getAnnotations();
-			return super.toString();
 		}
 	}
 

@@ -44,7 +44,7 @@ public abstract class AbstractVertex implements Serializable
 	/**
      * A map containing the annotations for this vertex.
      */
-    protected Map<String, String> annotations = new TreeMap<>();
+    private Map<String, String> annotations = new TreeMap<>();
 
     /**
      * An integer indicating the depth of the vertex in the graph

@@ -83,15 +83,27 @@ public class Sanitization extends AbstractTransformer
 					else if (line.startsWith(SANITIZATION_LEVEL))
 					{
 						String[] split = line.split("=");
-						assert (split.length == 2);
+						if(split.length != 2)
+						{
+							logger.log(Level.SEVERE, "incorrect format for sanitization level!");
+							return false;
+						}
 						this.sanitizationLevel = split[1].trim();
 					}
 					else
 					{
-						assert (level != null);
+						if(level == null)
+						{
+							logger.log(Level.SEVERE, "sanitization level not provided!");
+							return false;
+						}
 						List<String> annotations = new ArrayList<>();
 						String[] annotationsList = line.split(",");
-						assert (annotationsList.length > 0);
+						if(annotationsList.length <= 0)
+						{
+							logger.log(Level.SEVERE, "incorrect format for annotations!");
+							return false;
+						}
 						for (String annotation : annotationsList)
 						{
 							String cleanAnnotation = annotation.trim();
@@ -103,7 +115,8 @@ public class Sanitization extends AbstractTransformer
 							}
 							annotations.add(cleanAnnotation);
 						}
-						switch (level) {
+						switch (level)
+						{
 							case LOW:
 								lowAnnotations.addAll(annotations);
 								break;
@@ -198,15 +211,24 @@ public class Sanitization extends AbstractTransformer
 		String[] subnets = plainValue.split("\\.");
 		if(subnets.length <= 1)
 		{
-			// possibly an ipv6 address
+			// possibly an ipv6 address. e.g.,
 			// 2001:0db8:85a3:0000:0000:8a2e:0370:7334
 			subnets = plainValue.split(":");
 			if(subnets.length == 8)
 			{
 				ipv6 = true;
 			}
+			else
+			{
+				logger.log(Level.WARNING, "Malformed annotation value for IP address!");
+				return plainValue;
+			}
 		}
-		assert(subnets.length == 4 || subnets.length == 8);
+		if(!ipv6 && subnets.length != 4)
+		{
+			logger.log(Level.WARNING, "Malformed annotation value for IP address!");
+			return plainValue;
+		}
 		String sanitizedValue;
 		switch (level)
 		{
@@ -411,13 +433,13 @@ public class Sanitization extends AbstractTransformer
 	}
 
 
-//	public static void main(String[] args)
-//	{
-//		Graph graph = Graph.importGraph("sample.dot");
-//		System.out.println(graph);
-//		Sanitization sanitization = new Sanitization();
-//		sanitization.initialize("sanitizationLevel=high");
-//		Graph sanitizedGraph = sanitization.transform(graph, null);
-//		System.out.println(sanitizedGraph);
-//	}
+	public static void main(String[] args)
+	{
+		Graph graph = Graph.importGraph("sample.dot");
+		System.out.println(graph);
+		Sanitization sanitization = new Sanitization();
+		sanitization.initialize("sanitizationLevel=medium");
+		Graph sanitizedGraph = sanitization.transform(graph, null);
+		System.out.println(sanitizedGraph);
+	}
 }
