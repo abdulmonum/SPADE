@@ -39,11 +39,11 @@ import spade.edge.opm.WasDerivedFrom;
 import spade.reporter.Audit;
 //import spade.reporter.Audit;
 import spade.reporter.audit.Globals;
+import spade.reporter.audit.LinuxPathResolver;
 import spade.reporter.audit.OPMConstants;
-import spade.utility.CommonFunctions;
 import spade.utility.Converter;
+import spade.utility.HelperFunctions;
 import spade.utility.Result;
-import spade.utility.Serializable2ByteArrayConverter;
 import spade.utility.map.external.ExternalMap;
 import spade.utility.map.external.ExternalMapArgument;
 import spade.utility.map.external.ExternalMapManager;
@@ -177,6 +177,113 @@ public class ArtifactManager{
 			return (ArtifactState)objectInputStream.readObject();
 		}
 	}
+
+	private static final Converter<ArtifactIdentifier, byte[]> artifactIdentifierConverter =
+			new Converter<ArtifactIdentifier, byte[]>(){
+				private final StringBuilder append(StringBuilder str, String s){
+					return str.append(s == null ? "" : s);
+				}
+				@Override
+				public byte[] serialize(ArtifactIdentifier i) throws Exception{
+					if(i == null){
+						return null;
+					}else{
+						try{
+							StringBuilder str = new StringBuilder();
+							final String subtype = i.getSubtype();
+							append(str, subtype).append(",");
+							switch(subtype){
+								case OPMConstants.SUBTYPE_BLOCK_DEVICE:
+								case OPMConstants.SUBTYPE_CHARACTER_DEVICE:
+								case OPMConstants.SUBTYPE_DIRECTORY:
+								case OPMConstants.SUBTYPE_FILE:
+								case OPMConstants.SUBTYPE_LINK:
+								case OPMConstants.SUBTYPE_NAMED_PIPE:
+								case OPMConstants.SUBTYPE_UNIX_SOCKET:
+								case OPMConstants.SUBTYPE_POSIX_MSG_Q:
+									PathIdentifier pathIdentifier = (PathIdentifier)i;
+									append(str, pathIdentifier.rootFSPath);
+									append(str, LinuxPathResolver.PATH_SEPARATOR);
+									append(str, LinuxPathResolver.PATH_SEPARATOR);
+									append(str, LinuxPathResolver.PATH_SEPARATOR);
+									append(str, pathIdentifier.path).append(",");
+									append(str, pathIdentifier.getSubtype());
+									break;
+								case OPMConstants.SUBTYPE_MEMORY_ADDRESS: 
+									MemoryIdentifier mem = (MemoryIdentifier)i;
+									append(str, mem.getMemoryAddress()).append(",");
+									append(str, mem.getSize()).append(",");
+									append(str, mem.getTgid()).append(",");
+									append(str, mem.getSubtype());
+									break;
+								case OPMConstants.SUBTYPE_NETWORK_SOCKET:
+									NetworkSocketIdentifier net = (NetworkSocketIdentifier)i;
+									append(str, net.getLocalHost()).append(",");
+									append(str, net.getLocalPort()).append(",");
+									append(str, net.getRemoteHost()).append(",");
+									append(str, net.getRemotePort()).append(",");
+									append(str, net.getProtocol()).append(",");
+									append(str, net.netNamespaceId).append(",");
+									append(str, net.getSubtype());
+									break;
+								case OPMConstants.SUBTYPE_UNKNOWN:
+									UnknownIdentifier unknown = (UnknownIdentifier)i;
+									append(str, unknown.getFD()).append(",");
+									append(str, unknown.getTgid()).append(",");
+									append(str, unknown.getSubtype());
+									break;
+								case OPMConstants.SUBTYPE_UNNAMED_NETWORK_SOCKET_PAIR:
+									UnnamedNetworkSocketPairIdentifier unNet = (UnnamedNetworkSocketPairIdentifier)i;
+									append(str, unNet.fd0).append(",");
+									append(str, unNet.fd1).append(",");
+									append(str, unNet.protocol).append(",");
+									append(str, unNet.tgid).append(",");
+									append(str, unNet.getSubtype());
+									break;
+								case OPMConstants.SUBTYPE_UNNAMED_PIPE:
+									UnnamedPipeIdentifier unPipe = (UnnamedPipeIdentifier)i;
+									append(str, unPipe.fd0).append(",");
+									append(str, unPipe.fd1).append(",");
+									append(str, unPipe.tgid).append(",");
+									append(str, unPipe.getSubtype());
+									break;
+								case OPMConstants.SUBTYPE_UNNAMED_UNIX_SOCKET_PAIR:
+									UnnamedUnixSocketPairIdentifier unUnix = (UnnamedUnixSocketPairIdentifier)i;
+									append(str, unUnix.fd0).append(",");
+									append(str, unUnix.fd1).append(",");
+									append(str, unUnix.tgid).append(",");
+									append(str, unUnix.getSubtype());
+									break;
+								case OPMConstants.SUBTYPE_SYSV_MSG_Q:
+								case OPMConstants.SUBTYPE_SYSV_SHARED_MEMORY:
+									SystemVArtifactIdentifier sysv = (SystemVArtifactIdentifier)i;
+									append(str, sysv.id).append(",");
+									append(str, sysv.ouid).append(",");
+									append(str, sysv.ogid).append(",");
+									append(str, sysv.ipcNamespace).append(",");
+									append(str, sysv.getSubtype());
+									break;
+								default: throw new RuntimeException("Unexpected subtype: " + subtype);
+							}
+							return str.toString().getBytes();
+						}catch(Exception e){
+							throw new RuntimeException("Failed to serialize artifact identifier: " + i, e);
+						}
+					}
+				}
+				@Override
+				public byte[] serializeObject(Object o) throws Exception{
+					return serializeObject((ArtifactIdentifier)o);
+				}
+				@Override
+				public ArtifactIdentifier deserialize(byte[] j) throws Exception{
+					return null; // Only one-way needed
+				}
+				@Override
+				public ArtifactIdentifier deserializeObject(Object o) throws Exception{
+					return deserialize((byte[])o);
+				}
+			};
 	
 	private static final Converter<ArtifactState, byte[]> artifactStateConverter = 
 			new Converter<ArtifactState, byte[]>(){
@@ -361,7 +468,7 @@ public class ArtifactManager{
 			}else{
 				ExternalMapArgument externalMapArgument = externalMapArgumentResult.result;
 				Result<ExternalMap<ArtifactIdentifier, ArtifactState>> externalMapResult = ExternalMapManager.create(externalMapArgument,
-						new Serializable2ByteArrayConverter<ArtifactIdentifier>(), artifactStateConverter);
+						artifactIdentifierConverter, artifactStateConverter);
 				if(externalMapResult.error){
 					logger.log(Level.SEVERE, "Failed to create external map '"+artifactsMapId+"' from arguments: " + externalMapArgument);
 					logger.log(Level.SEVERE, externalMapResult.toErrorString());
@@ -380,6 +487,8 @@ public class ArtifactManager{
 	private Map<Class<? extends ArtifactIdentifier>, ArtifactConfig> getArtifactConfig(Globals globals){
 		Map<Class<? extends ArtifactIdentifier>, ArtifactConfig> map = 
 				new HashMap<Class<? extends ArtifactIdentifier>, ArtifactConfig>();
+		map.put(PosixMessageQueue.class, 
+				new ArtifactConfig(true, globals.epochs, globals.versions, globals.permissions, true, true, true));
 		map.put(BlockDeviceIdentifier.class, 
 				new ArtifactConfig(true, globals.epochs, globals.versions, globals.permissions, true, true, true));
 		map.put(CharacterDeviceIdentifier.class, 
@@ -413,6 +522,12 @@ public class ArtifactManager{
 		map.put(UnnamedUnixSocketPairIdentifier.class, 
 				new ArtifactConfig(true, globals.epochs, globals.versions, false, 
 						true, globals.versionUnnamedUnixSocketPairs, false));
+		map.put(SystemVSharedMemoryIdentifier.class, 
+				new ArtifactConfig(true, globals.epochs, globals.versions, false, 
+						true, true, false));
+		map.put(SystemVMessageQueueIdentifier.class, 
+				new ArtifactConfig(true, globals.epochs, globals.versions, false, 
+						true, true, false));
 		return map;
 	}
 	
@@ -440,8 +555,7 @@ public class ArtifactManager{
 		// Special checks
 		if(identifier instanceof PathIdentifier){
 			PathIdentifier pathIdentifier = (PathIdentifier)identifier;
-			String path = pathIdentifier.getPath();
-			if(path.startsWith("/dev/")){
+			if(pathIdentifier.path != null && pathIdentifier.path.startsWith("/dev/")){
 				return false;
 			}
 		}
@@ -541,11 +655,11 @@ public class ArtifactManager{
 					String lastPermissions = state.getLastPutPermissions();
 					
 					// Special check
-					if((config.hasVersion && lastVersion == null) || (config.hasEpoch && (lastEpoch == null || !CommonFunctions.bigIntegerEquals(lastEpoch, epoch)))){
+					if((config.hasVersion && lastVersion == null) || (config.hasEpoch && (lastEpoch == null || !HelperFunctions.bigIntegerEquals(lastEpoch, epoch)))){
 						// First one so no derived edge
 					}else{
 						boolean permissionedUpdated = config.hasPermissions && config.canBePermissioned && !StringUtils.equals(lastPermissions, permissions);
-						boolean versionUpdated = config.hasVersion && config.canBeVersioned && lastVersion != null && !CommonFunctions.bigIntegerEquals(lastVersion, version);
+						boolean versionUpdated = config.hasVersion && config.canBeVersioned && lastVersion != null && !HelperFunctions.bigIntegerEquals(lastVersion, version);
 						if(versionUpdated || permissionedUpdated){
 							Artifact lastArtifact = 
 									getArtifact(identifier, lastEpoch, lastVersion, lastPermissions, source);
@@ -597,12 +711,8 @@ public class ArtifactManager{
 		return annotations;
 	}
 	
-	private void addSourceAnnotation(Map<String, String> annotations, String source){
-		annotations.put(OPMConstants.SOURCE, source);
-	}
-	
 	private void addSourceAnnotation(Artifact artifact, String source){
-		addSourceAnnotation(artifact.getAnnotations(), source);;
+		artifact.addAnnotation(OPMConstants.SOURCE, source);
 	}
 	
 	public void doCleanUp(){

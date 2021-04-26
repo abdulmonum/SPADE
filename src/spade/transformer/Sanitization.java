@@ -1,7 +1,37 @@
+/*
+ --------------------------------------------------------------------------------
+ SPADE - Support for Provenance Auditing in Distributed Environments.
+ Copyright (C) 2020 SRI International
+ This program is free software: you can redistribute it and/or
+ modify it under the terms of the GNU General Public License as
+ published by the Free Software Foundation, either version 3 of the
+ License, or (at your option) any later version.
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ General Public License for more details.
+ You should have received a copy of the GNU General Public License
+ along with this program. If not, see <http://www.gnu.org/licenses/>.
+ --------------------------------------------------------------------------------
+ */
 package spade.transformer;
 
+import java.io.File;
+import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang.StringUtils;
+
 import spade.client.QueryMetaData;
 import spade.core.AbstractEdge;
 import spade.core.AbstractTransformer;
@@ -9,19 +39,12 @@ import spade.core.AbstractVertex;
 import spade.core.Graph;
 import spade.core.Settings;
 import spade.reporter.audit.OPMConstants;
-import spade.utility.CommonFunctions;
-
-import java.io.File;
-import java.lang.reflect.Method;
-import java.nio.charset.StandardCharsets;
-import java.util.*;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
-import static spade.core.Kernel.FILE_SEPARATOR;
+import spade.utility.HelperFunctions;
 
 public class Sanitization extends AbstractTransformer
 {
+	private static final String pathSeparatorInData = "/";
+	
 	private String sanitizationLevel;
 
 	private static final String LOW = "low";
@@ -45,7 +68,7 @@ public class Sanitization extends AbstractTransformer
 		{
 			return false;
 		}
-		Map<String, String> argsMap = CommonFunctions.parseKeyValPairs(arguments);
+		Map<String, String> argsMap = HelperFunctions.parseKeyValPairs(arguments);
 		String level_str = argsMap.get("sanitizationLevel");
 		if(level_str != null)
 		{
@@ -177,7 +200,7 @@ public class Sanitization extends AbstractTransformer
 
 	private String sanitizePath(String key, String plainValue, String level)
 	{
-		String[] subpaths = plainValue.split(FILE_SEPARATOR, 5);
+		String[] subpaths = plainValue.split(pathSeparatorInData, 5);
 		String sanitizedValue;
 		int numpaths = subpaths.length;
 		switch (level)
@@ -201,82 +224,67 @@ public class Sanitization extends AbstractTransformer
 				}
 				break;
 		}
-		sanitizedValue = String.join(FILE_SEPARATOR, subpaths);
+		sanitizedValue = String.join(pathSeparatorInData, subpaths);
 		return sanitizedValue;
 	}
 
 	private String sanitizeIpAddress(String key, String plainValue, String level)
 	{
-		boolean ipv6 = false;
-		String[] subnets = plainValue.split("\\.");
-		if(subnets.length <= 1)
-		{
-			// possibly an ipv6 address. e.g.,
-			// 2001:0db8:85a3:0000:0000:8a2e:0370:7334
-			subnets = plainValue.split(":");
-			if(subnets.length == 8)
-			{
-				ipv6 = true;
-			}
-			else
-			{
-				logger.log(Level.WARNING, "Malformed annotation value for IP address!");
+		if(plainValue.contains(".")){
+			// Assumed to be IPv4
+			final String tokens[] = plainValue.split("\\.");
+			if(tokens.length != 4){
+				logger.log(Level.WARNING, "Value not sanitized. Unexpected format of IPv4 address: '" + plainValue + "'. Must be in format: a.b.c.d");
 				return plainValue;
+			}else{
+				switch(level){
+					case LOW:
+						tokens[1] = NULLSTR;
+						break;
+					case MEDIUM:
+						tokens[2] = NULLSTR;
+						break;
+					case HIGH:
+						tokens[3] = NULLSTR;
+						break;
+					default:
+						logger.log(Level.WARNING, "Unexpected sanitization level: '"+level+"'. Allowed '"+LOW+"' or '"+MEDIUM+"' or '"+HIGH+"'.");
+						return plainValue;
+				}
+				final String sanitizedValue = String.join(".", tokens);
+				return sanitizedValue;
 			}
-		}
-		if(!ipv6 && subnets.length != 4)
-		{
-			logger.log(Level.WARNING, "Malformed annotation value for IP address!");
+		}else if(plainValue.contains(":")){
+			// Assumed to be IPv6
+			final String tokens[] = plainValue.split(":");
+			if(tokens.length != 8){
+				logger.log(Level.WARNING, "Value not sanitized. Unexpected format of IPv6 address: '" + plainValue + "'. Must be in format: a:b:c:d:e:f:g:h");
+				return plainValue;
+			}else{
+				switch(level){
+					case LOW:
+						tokens[2] = NULLSTR;
+						tokens[3] = NULLSTR;
+						break;
+					case MEDIUM:
+						tokens[4] = NULLSTR;
+						tokens[5] = NULLSTR;
+						break;
+					case HIGH:
+						tokens[6] = NULLSTR;
+						tokens[7] = NULLSTR;
+						break;
+					default:
+						logger.log(Level.WARNING, "Unexpected sanitization level: '"+level+"'. Allowed '"+LOW+"' or '"+MEDIUM+"' or '"+HIGH+"'.");
+						return plainValue;
+				}
+				final String sanitizedValue = String.join(":", tokens);
+				return sanitizedValue;
+			}
+		}else{
+			logger.log(Level.WARNING, "Value not sanitized. Unexpected format of IP address: '" + plainValue + "'. Allowed either fully expanded IPv6 or IPv4.");
 			return plainValue;
 		}
-		String sanitizedValue;
-		switch (level)
-		{
-			case LOW:
-				if(ipv6)
-				{
-					subnets[2] = NULLSTR;
-					subnets[3] = NULLSTR;
-				}
-				else
-				{
-					subnets[1] = NULLSTR;
-				}
-				break;
-			case MEDIUM:
-				if(ipv6)
-				{
-					subnets[4] = NULLSTR;
-					subnets[5] = NULLSTR;
-				}
-				else
-				{
-					subnets[2] = NULLSTR;
-				}
-				break;
-			case HIGH:
-				if(ipv6)
-				{
-					subnets[6] = NULLSTR;
-					subnets[7] = NULLSTR;
-				}
-				else
-				{
-					subnets[3] = NULLSTR;
-				}
-				break;
-		}
-		String sep;
-		if(ipv6)
-		{
-			sep = ":";
-		}
-		else
-		{
-			sep = ".";
-		}
-		sanitizedValue = String.join(sep, subnets);
-		return sanitizedValue;
 	}
 
 	private void sanitizeAnnotations(AbstractEdge edge, List<String> keys, String level)
@@ -398,10 +406,11 @@ public class Sanitization extends AbstractTransformer
 	@Override
 	public Graph transform(Graph graph, QueryMetaData queryMetaData)
 	{
-		convertUnixTime(graph.edgeSet());
-		sanitizeVertices(graph.vertexSet());
-		sanitizeEdges(graph.edgeSet());
-		return graph;
+		final Graph resultGraph = graph.copy();
+		convertUnixTime(resultGraph.edgeSet());
+		sanitizeVertices(resultGraph.vertexSet());
+		sanitizeEdges(resultGraph.edgeSet());
+		return resultGraph;
 	}
 
 	private static void convertUnixTime(Set<AbstractEdge> edgeSet)
@@ -430,16 +439,5 @@ public class Sanitization extends AbstractTransformer
 		String timestamp = year + "-" + month + "-" + day + " " + hour + ":" +
 				minute + ":" + second + "." + millisecond;
 		edge.addAnnotation(OPMConstants.EDGE_TIME, timestamp);
-	}
-
-
-	public static void main(String[] args)
-	{
-		Graph graph = Graph.importGraph("sample.dot");
-		System.out.println(graph);
-		Sanitization sanitization = new Sanitization();
-		sanitization.initialize("sanitizationLevel=medium");
-		Graph sanitizedGraph = sanitization.transform(graph, null);
-		System.out.println(sanitizedGraph);
 	}
 }

@@ -19,23 +19,16 @@
  */
 package spade.core;
 
-import spade.query.scaffold.Scaffold;
-import spade.query.scaffold.ScaffoldFactory;
-
 import java.io.FileInputStream;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedList;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
-import java.util.Queue;
-import java.util.Set;
-import java.util.Stack;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import static spade.core.Kernel.CONFIG_PATH;
-import static spade.core.Kernel.FILE_SEPARATOR;
-import static spade.core.Kernel.SPADE_ROOT;
+import spade.query.quickgrail.core.QueryInstructionExecutor;
+import spade.query.scaffold.Scaffold;
+import spade.query.scaffold.ScaffoldFactory;
 
 
 /**
@@ -45,6 +38,99 @@ import static spade.core.Kernel.SPADE_ROOT;
  */
 public abstract class AbstractStorage
 {
+	// Screens only accessible from package and self (not even children can view it)
+	final Object screensLock = new Object();
+	final List<AbstractScreen> screens = new ArrayList<AbstractScreen>();
+
+	final void addScreen(final AbstractScreen screen) throws IllegalArgumentException{
+		if(screen == null){
+			throw new IllegalArgumentException("NULL screen cannot be added");
+		}
+		synchronized(screensLock){
+			screens.add(screen);
+		}
+	}
+
+	final void addScreens(final List<AbstractScreen> screens) throws IllegalArgumentException{
+		if(screens == null){
+			throw new IllegalArgumentException("NULL screens cannot be added");
+		}
+		for(final AbstractScreen screen : screens){
+			addScreen(screen);
+		}
+	}
+
+	final List<AbstractScreen> getScreens(){
+		synchronized(screensLock){
+			return new ArrayList<AbstractScreen>(screens);
+		}
+	}
+
+	final void clearScreens(){
+		synchronized(screensLock){
+			screens.clear();
+		}
+	}
+	
+	public final AbstractScreen findScreen(final Class<? extends AbstractScreen> screenClass){
+		if(screenClass != null){
+			synchronized(screensLock){
+				for(final AbstractScreen screen : screens){
+					if(screen != null){
+						if(screen.getClass().equals(screenClass)){
+							return screen;
+						}
+					}
+				}	
+			}
+		}
+		return null;
+	}
+
+	public final boolean putVertex(final AbstractVertex vertex){
+		boolean block = false;
+		if(vertex == null){
+			block = true;
+		}else{
+			synchronized(screensLock){
+				for(final AbstractScreen screen : screens){
+					if(screen.blockVertex(vertex)){
+						block = true;
+						break;
+					}
+				}
+			}
+		}
+		if(block){
+			return false;
+		}else{
+			return storeVertex(vertex);
+		}
+	}
+
+	public final boolean putEdge(final AbstractEdge edge){
+		boolean block = false;
+		if(edge == null){
+			block = true;
+		}else{
+			synchronized(screensLock){
+				for(final AbstractScreen screen : screens){
+					if(screen.blockEdge(edge)){
+						block = true;
+						break;
+					}
+				}
+			}
+		}
+		if(block){
+			return false;
+		}else{
+			return storeEdge(edge);
+		}
+	}
+
+	////////////////
+
     public static final String PRIMARY_KEY = "hash";
     public static final String CHILD_VERTEX_KEY = "childVertexHash";
     public static final String PARENT_VERTEX_KEY = "parentVertexHash";
@@ -81,7 +167,7 @@ public abstract class AbstractStorage
     protected long startTime, lastReportedTime;
     protected long lastReportedVertexCount, lastReportedEdgeCount;
 
-    private static String configFile = CONFIG_PATH + FILE_SEPARATOR + "spade.core.AbstractStorage.config";
+    private static String configFile = Settings.getDefaultConfigFilePath(AbstractStorage.class);
     /**
      * Variables and functions for managing scaffold storage
      */
@@ -95,7 +181,7 @@ public abstract class AbstractStorage
         {
             databaseConfigs.load(new FileInputStream(configFile));
             BUILD_SCAFFOLD = Boolean.parseBoolean(databaseConfigs.getProperty("build_scaffold"));
-            SCAFFOLD_PATH = SPADE_ROOT + databaseConfigs.getProperty("scaffold_path");
+            SCAFFOLD_PATH = Settings.getPathRelativeToSPADERoot(databaseConfigs.getProperty("scaffold_path"));
             SCAFFOLD_DATABASE_NAME = databaseConfigs.getProperty("scaffold_database_name");
             if(BUILD_SCAFFOLD)
             {
@@ -110,7 +196,7 @@ public abstract class AbstractStorage
         {
             // default settings
             BUILD_SCAFFOLD = false;
-            SCAFFOLD_PATH = SPADE_ROOT + "db/scaffold";
+            SCAFFOLD_PATH = Settings.getPathRelativeToSPADERoot("db", "scaffold");
             SCAFFOLD_DATABASE_NAME = "BerkeleyDB";
             Logger.getLogger(AbstractStorage.class.getName()).log(Level.WARNING,
             "Loading scaffold configurations from file '" + configFile + "' " +
@@ -213,52 +299,9 @@ public abstract class AbstractStorage
      *
      * @return True if the transactions were flushed successfully.
      */
-    public boolean flushTransactions() {
+    public boolean flushTransactions(boolean force) {
         return true;
     }
-
-    /**
-     * This function queries the underlying storage and retrieves the edge
-     * matching the given criteria.
-     *
-     * @param childVertexHash hash of the source vertex.
-     * @param parentVertexHash hash of the destination vertex.
-     * @return returns edge object matching the given vertices OR NULL.
-     */
-    @Deprecated
-    public abstract AbstractEdge getEdge(String childVertexHash, String parentVertexHash);
-
-    /**
-     * This function queries the underlying storage and retrieves the vertex
-     * matching the given criteria.
-     *
-     * @param vertexHash hash of the vertex to find.
-     * @return returns vertex object matching the given hash OR NULL.
-     */
-    @Deprecated
-    public abstract AbstractVertex getVertex(String vertexHash);
-
-
-    /**
-     * This function finds the children of a given vertex.
-     * A child is defined as a vertex which is the source of a
-     * direct edge between itself and the given vertex.
-     *
-     * @param parentHash hash of the given vertex
-     * @return returns graph object containing children of the given vertex OR NULL.
-     */
-    public abstract Graph getChildren(String parentHash);
-
-    /**
-     * This function finds the parents of a given vertex.
-     * A parent is defined as a vertex which is the destination of a
-     * direct edge between itself and the given vertex.
-     *
-     * @param childVertexHash hash of the given vertex
-     * @return returns graph object containing parents of the given vertex OR NULL.
-     */
-    public abstract Graph getParents(String childVertexHash);
-
 
     /**
      * This function inserts the given edge into the underlying storage(s) and
@@ -267,7 +310,7 @@ public abstract class AbstractStorage
      * @return returns true if the insertion is successful. Insertion is considered
      * not successful if the edge is already present in the storage.
      */
-    public abstract boolean putEdge(AbstractEdge incomingEdge);
+    public abstract boolean storeEdge(AbstractEdge incomingEdge);
 
     /**
      * This function inserts the given vertex into the underlying storage(s) and
@@ -276,131 +319,12 @@ public abstract class AbstractStorage
      * @return returns true if the insertion is successful. Insertion is considered
      * not successful if the vertex is already present in the storage.
      */
-    public abstract boolean putVertex(AbstractVertex incomingVertex);
-
-    /**
-     * This function finds the lineage of the graph starting from a source vertex.
-     *
-     * @param hash hash of the source vertex
-     * @param direction direction of traversal from the source vertex
-     * @param maxDepth Maximum depth from source vertex to traverse
-     *
-     * @return returns the graph comprising of the subgraph starting from the source vertex
-     * up till the specified depth OR NULL.
-     */
-    @Deprecated
-    public Graph getLineage(String hash, String direction, int maxDepth)
-    {
-        Graph result = new Graph();
-        AbstractVertex previousVertex = null;
-        AbstractVertex currentVertex = null;
-        int depth = 0;
-        Queue<AbstractVertex> queue = new LinkedList<>();
-        queue.add(getVertex(hash));
-        while(!queue.isEmpty() && depth < maxDepth)
-        {
-            currentVertex = queue.remove();
-            String currentHash = currentVertex.getAnnotation("hash");
-            if(DIRECTION_ANCESTORS.startsWith(direction.toLowerCase()))
-                queue.addAll(getParents(currentHash).vertexSet());
-            else if(DIRECTION_DESCENDANTS.startsWith(direction.toLowerCase()))
-                queue.addAll(getChildren(currentHash).vertexSet());
-
-            result.putVertex(currentVertex);
-            if(previousVertex != null)
-                result.putEdge(getEdge(previousVertex.getAnnotation("hash"), currentHash));
-
-            previousVertex = currentVertex;
-            depth++;
-        }
-
-        return result;
-    }
-
-
-    /**
-     * This function finds all possible paths between source and destination vertices.
-     *
-     * @param childVertexHash hash of the source vertex
-     * @param parentVertexHash hash of the destination vertex
-     * @param maxPathLength maximum length of any path to find
-     *
-     * @return returns graph containing all paths between the given source and destination vertex OR NULL.
-     */
-    @Deprecated
-    public Graph getPaths(String childVertexHash, String parentVertexHash, int maxPathLength)
-    {
-        Set<Graph> allPaths = new HashSet<>();
-        Stack<AbstractVertex>currentPath = new Stack<>();
-        AbstractVertex previousVertex = null;
-        AbstractVertex currentVertex = null;
-        int pathLength = 0;
-        Queue<AbstractVertex> queue = new LinkedList<>();
-        queue.add(getVertex(childVertexHash));
-        Graph children = null;
-        while(!queue.isEmpty())
-        {
-            pathLength++;
-            if(pathLength > maxPathLength)
-                children = null;
-            currentVertex = queue.remove();
-            String currentHash = currentVertex.getAnnotation("hash");
-            currentPath.push(currentVertex);
-            if(currentHash.equals(parentVertexHash))
-            {
-                allPaths.add(convertStackToGraph(currentPath));
-            }
-            else
-            {
-                children = getChildren(currentHash);
-            }
-
-            if(children != null)
-            {
-                queue.addAll(children.vertexSet());
-                continue;
-            }
-
-            currentPath.pop();
-        }
-
-        // merge graphs for each path
-        Graph resultGraph = new Graph();
-        for (Graph path: allPaths)
-        {
-            resultGraph = Graph.union(resultGraph, path);
-        }
-
-
-        return resultGraph;
-    }
-
-
-    /**
-     * This helper function converts a stack of vertices into
-     * a corresponding graph of vertices. It also finds and adds
-     * the edges between those vertices.
-     * @param stack stack of vertices to convert into a graph
-     * @return returns a graph consisting only of vertices present in the stack
-     */
-    @Deprecated
-    protected Graph convertStackToGraph(Stack<AbstractVertex> stack)
-    {
-        Graph graph = new Graph();
-        Iterator<AbstractVertex> iter = stack.iterator();
-        AbstractVertex previous = iter.next();
-        graph.putVertex(previous);
-        while(iter.hasNext())
-        {
-            AbstractVertex curr = iter.next();
-            graph.putVertex(curr);
-            graph.putEdge(getEdge(previous.getAnnotation("hash"), curr.getAnnotation("hash")));
-            previous = curr;
-        }
-
-
-        return graph;
-    }
+    public abstract boolean storeVertex(AbstractVertex incomingVertex);
 
     public abstract Object executeQuery(String query);
+    
+    public QueryInstructionExecutor getQueryInstructionExecutor(){
+    	throw new RuntimeException("Storage does not support querying!");
+    }
+    
 }

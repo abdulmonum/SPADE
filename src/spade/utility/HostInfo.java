@@ -50,7 +50,34 @@ import spade.reporter.audit.VertexIdentifier;
 public class HostInfo{
 
 	private static final Logger logger = Logger.getLogger(HostInfo.class.getName());
-	
+
+	/**
+	 * Returns host name using the command 'uname -a'
+	 * 
+	 * @return The non-null host name
+	 * @throws Exception
+	 */
+	public static String getHostName() throws Exception{
+		String command = "uname -a";
+		Execute.Output output = Execute.getOutput(command);
+		if(output.hasError()){
+			throw new Exception("'uname' error: " + output.getStdErr());
+		}else{
+			List<String> stdOutLines = output.getStdOut();
+			if(stdOutLines.isEmpty()){
+				throw new Exception("Unexpected 'uname' output: Empty");
+			}else{
+				String line = stdOutLines.get(0);
+				String unameTokens[] = line.split("\\s+");
+				if(unameTokens.length > 1){
+					return unameTokens[1];
+				}else{
+					throw new Exception("Unexpected 'uname' output: No hostname token at index 1: " + line);
+				}
+			}
+		}
+	}
+
 	/**
 	 * Class to read host information from the underlying operating system.
 	 * Currently only for Ubuntu 14.04.
@@ -586,12 +613,12 @@ public class HostInfo{
 			Map<String, String> map = host.getAnnotationsMap();
 			JSONObject jsonObject = new JSONObject(map);
 			String jsonObjectString = jsonObject.toString();
-			String jsonHexObjectString = CommonFunctions.encodeHex(jsonObjectString);
+			String jsonHexObjectString = HelperFunctions.encodeHex(jsonObjectString);
 			return jsonHexObjectString;
 		}
 		
 		private static Host hexStringToHost(String objectAsString){
-			String jsonObjectString = CommonFunctions.decodeHex(objectAsString);
+			String jsonObjectString = HelperFunctions.decodeHex(objectAsString);
 			try{
 				@SuppressWarnings("unchecked")
 				Map<String, String> map = (TreeMap<String, String>)new ObjectMapper().readValue(
@@ -636,7 +663,7 @@ public class HostInfo{
 			host.hostType = unNullify(map.get(OPMConstants.ARTIFACT_HOST_TYPE));
 			host.serialNumber = unNullify(map.get(OPMConstants.ARTIFACT_HOST_SERIAL_NUMBER));
 			host.operationSystem = unNullify(map.get(OPMConstants.ARTIFACT_HOST_OPERATING_SYSTEM));
-			Integer a = CommonFunctions.parseInt(unNullify(map.get(OPMConstants.ARTIFACT_HOST_INTERFACES_COUNT)), 0);
+			Integer a = HelperFunctions.parseInt(unNullify(map.get(OPMConstants.ARTIFACT_HOST_INTERFACES_COUNT)), 0);
 			for(int b = 0; b < a; b++){
 				String interfaceNameKey = OPMConstants.buildHostNetworkInterfaceNameKey(b);
 				String interfaceMacAddressKey = OPMConstants.buildHostNetworkInterfaceMacAddressKey(b);

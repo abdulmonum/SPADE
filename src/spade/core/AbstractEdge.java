@@ -20,12 +20,11 @@
 package spade.core;
 
 import java.io.Serializable;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.TreeMap;
 
-import com.mysql.jdbc.StringUtils;
-import org.apache.commons.codec.digest.DigestUtils;
-import spade.reporter.audit.OPMConstants;
+import spade.utility.HelperFunctions;
 
 /**
  * This is the class from which other edge classes (e.g., OPM edges) are
@@ -33,80 +32,97 @@ import spade.reporter.audit.OPMConstants;
  *
  * @author Dawood Tariq
  */
-public abstract class AbstractEdge implements Serializable
-{
+public abstract class AbstractEdge implements Serializable{
 
-    /**
-	 * 
-	 */
-	private static final long serialVersionUID = 5777793863959971982L;
+	private static final long serialVersionUID = -2920945968273904093L;
+
+	public static final String hashKey = AbstractVertex.hashKey;
+	public static final String annotationsKey = AbstractVertex.annotationsKey;
+	public static final String typeKey = AbstractVertex.typeKey;
+	public static final String idKey = AbstractVertex.idKey;
+	public static final String childVertexKey = "childVertex";
+	public static final String parentVertexKey = "parentVertex";
+	public static final String fromIdKey = "from"; // child
+	public static final String toIdKey = "to"; // parent
+
 	/**
      * A map containing the annotations for this edge.
      */
-    private Map<String, String> annotations = new TreeMap<>();
+    private final Map<String, String> annotations = new TreeMap<>();
     private AbstractVertex childVertex;
     private AbstractVertex parentVertex;
 
     /**
-     * Checks if edge is empty
-     *
-     * @return Returns true if edge contains no annotation,
-     * and both end points are empty
+     * String big hash to be returned by bigHashCode function only if not null.
+     * If null then big hash computed using the annotations map.
      */
-    public final boolean isEmpty()
-    {
-        return annotations.size() == 0 && childVertex != null && parentVertex != null;
+    private final String bigHashCode;
+    
+    /**
+     * Create a vertex without a fixed big hash.
+     */
+    public AbstractEdge(){
+    	this.bigHashCode = null;
     }
-
+    
+    /**
+     * Create a vertex with a fixed big hash.
+     * 
+     * @param hexHashString String
+     */
+    public AbstractEdge(String hexHashString){
+    	if(!HashHelper.defaultInstance.isValidHashHexString(hexHashString)){
+    		throw new RuntimeException("Invalid Edge hash. "
+    				+ "Mismatch in hex hash string '"+hexHashString+"' and hash algorithm " + HashHelper.defaultInstance);
+    	}
+    	this.bigHashCode = hexHashString;
+    }
+    
+    /**
+     * Returns true if the vertex has a fixed big hash otherwise false
+     * 
+     * @return true/false
+     */
+    public final boolean isReferenceEdge(){
+    	return bigHashCode != null;
+    }
 
     /**
      * Returns the map containing the annotations for this edge.
      *
      * @return The map containing the annotations.
      */
-    public Map<String, String> getAnnotations() {
-        return annotations;
+    public final Map<String, String> getCopyOfAnnotations() {
+        return new HashMap<String, String>(annotations);
     }
-
+    
     /**
      * Adds an annotation.
      *
      * @param key The annotation key.
      * @param value The annotation value.
      */
-    public void addAnnotation(String key, String value)
-    {
-        if(!StringUtils.isNullOrEmpty(key))
-        {
-            if(value == null)
-            {
-                value = "";
-            }
-            annotations.put(key, value);
-        }
-    }
+	public void addAnnotation(String key, String value){
+		if(!HelperFunctions.isNullOrEmpty(key)){
+			if(value == null){
+				value = "";
+			}
+			annotations.put(key, value);
+		}
+	}
 
     /**
      * Adds a map of annotation.
      *
      * @param newAnnotations New annotations to be added.
      */
-    public void addAnnotations(Map<String, String> newAnnotations)
-    {
-        for (Map.Entry<String, String> currentEntry : newAnnotations.entrySet())
-        {
-            String key = currentEntry.getKey();
-            String value = currentEntry.getValue();
-            if(!StringUtils.isNullOrEmpty(key))
-            {
-                if(value == null)
-                {
-                    value = "";
-                }
-                addAnnotation(key, value);
-            }
-        }
-    }
+	public void addAnnotations(Map<String, String> newAnnotations){
+		for(Map.Entry<String, String> currentEntry : newAnnotations.entrySet()){
+			String key = currentEntry.getKey();
+			String value = currentEntry.getValue();
+			addAnnotation(key, value);
+		}
+	}
 
     /**
      * Removes an annotation.
@@ -115,7 +131,7 @@ public abstract class AbstractEdge implements Serializable
      * @return The annotation that is removed, or null of no such annotation key
      * existed.
      */
-    public final String removeAnnotation(String key) {
+    public final String removeAnnotation(String key){
         return annotations.remove(key);
     }
 
@@ -125,7 +141,7 @@ public abstract class AbstractEdge implements Serializable
      * @param key The annotation key.
      * @return The value of the annotation corresponding to the key.
      */
-    public String getAnnotation(String key) {
+    public final String getAnnotation(String key){
         return annotations.get(key);
     }
 
@@ -134,8 +150,26 @@ public abstract class AbstractEdge implements Serializable
      *
      * @return A string indicating the type of this edge.
      */
-    public final String type() {
-        return annotations.get(OPMConstants.TYPE);
+    public final String type(){
+        return annotations.get(typeKey);
+    }
+    
+    /**
+     * Sets the type of this edge
+     * 
+     * @param typeValue Must be a non-null string otherwise converted to empty string
+     */
+    protected final void setType(final String typeValue){
+    	addAnnotation(typeKey, typeValue);
+    }
+    
+    /**
+     * Gets the id of this edge.
+     *
+     * @return A string indicating the id of this edge (if any).
+     */
+    public final String id(){
+        return annotations.get(idKey);
     }
 
     // The following functions that get and set source and destination vertices
@@ -181,76 +215,80 @@ public abstract class AbstractEdge implements Serializable
     }
 
     /**
-     * Computes MD5 hash of annotations in the edge and its end point vertices.
-     *
-     @return A 128-bit hash digest.
+     * Computes hash of annotations in the edge and hashes of the endpoints according to the default set in spade.core.HashHelper.
+     * If the hash was fixed then that is used.
      */
-    public String bigHashCode()
-    {
-        return DigestUtils.md5Hex(this.toString());
-    }
+	public final String bigHashCode(){
+		if(bigHashCode == null){
+			final String data = 
+					((childVertex == null) ? "(null)" : childVertex.bigHashCode()) + ","
+					+ annotations.toString() + ","
+					+ ((parentVertex == null) ? "(null)" : parentVertex.bigHashCode());
+			return HashHelper.defaultInstance.hashToHexString(data);
+		}else{
+			return bigHashCode;
+		}
+	}
 
-    /**
-     * Computes MD5 hash of annotations in the vertex.
-     *
-     @return A 128-bit hash digest.
-     */
-    public byte[] bigHashCodeBytes()
-    {
-        return DigestUtils.md5(this.toString());
+	public final byte[] bigHashCodeBytes(){
+		return HashHelper.defaultInstance.convertHashHexStringToHashByteArray(bigHashCode());
     }
 
     @Override
 	public boolean equals(Object obj){
-		if(this == obj)
+    	if(this == obj)
 			return true;
 		if(obj == null)
 			return false;
-		if(getClass() != obj.getClass())
-			return false;
 		AbstractEdge other = (AbstractEdge) obj;
-		if(annotations == null){
-			if(other.annotations != null)
-				return false;
-		}else if(!annotations.equals(other.annotations))
-			return false;
-		if(childVertex == null){
-			if(other.childVertex != null)
-				return false;
-		}else if(!childVertex.equals(other.childVertex))
-			return false;
-		if(parentVertex == null){
-			if(other.parentVertex != null)
-				return false;
-		}else if(!parentVertex.equals(other.parentVertex))
-			return false;
-		return true;
-	}    
-
-    /**
-     * Computes a function of the annotations in the edge and the vertices it is incident upon.
-     *
-     * This takes less time to compute than bigHashCode() but is less collision-resistant.
-     *
-     * @return An integer-valued hash code.
-     */
-    @Override
-	public int hashCode(){
-		final int prime = 31;
-		int result = 1;
-		result = prime * result + ((annotations == null) ? 0 : annotations.hashCode());
-		result = prime * result + ((childVertex == null) ? 0 : childVertex.hashCode());
-		result = prime * result + ((parentVertex == null) ? 0 : parentVertex.hashCode());
-		return result;
+		return bigHashCode().equals(other.bigHashCode());
 	}
 
     @Override
-    public String toString()
-    {
-        return "AbstractEdge{" +
-                "annotations=" + annotations +
-                ", childVertex=" + childVertex +
-                ", parentVertex=" + parentVertex +
-                '}';
-    }
+	public int hashCode(){
+    	final int prime = 31;
+		int result = 1;
+		result = prime * result + bigHashCode().hashCode();
+		return result;
+	}
+
+	@Override
+	public final String toString(){
+		return "AbstractEdge{" 
+				+ hashKey + "=" + bigHashCode() + ", " 
+				+ childVertexKey + "=" + childVertex + ", "
+				+ parentVertexKey + "=" + parentVertex + ", "
+				+ annotationsKey + "=" + annotations
+				+ "}";
+	}
+	
+	public static final boolean isEdgeType(String type){
+		if(HelperFunctions.isNullOrEmpty(type)){
+			return false;
+		}
+		type = type.trim();
+		if(	// generic vertex
+			type.equalsIgnoreCase(spade.core.Edge.typeValue)
+			// prov
+			|| type.equalsIgnoreCase(spade.edge.prov.ActedOnBehalfOf.typeValue)
+			|| type.equalsIgnoreCase(spade.edge.prov.Used.typeValue)
+			|| type.equalsIgnoreCase(spade.edge.prov.WasAssociatedWith.typeValue)
+			|| type.equalsIgnoreCase(spade.edge.prov.WasAttributedTo.typeValue)
+			|| type.equalsIgnoreCase(spade.edge.prov.WasDerivedFrom.typeValue)
+			|| type.equalsIgnoreCase(spade.edge.prov.WasGeneratedBy.typeValue)
+			|| type.equalsIgnoreCase(spade.edge.prov.WasInformedBy.typeValue)
+			// opm
+			|| type.equalsIgnoreCase(spade.edge.opm.Used.typeValue)
+			|| type.equalsIgnoreCase(spade.edge.opm.WasControlledBy.typeValue)
+			|| type.equalsIgnoreCase(spade.edge.opm.WasDerivedFrom.typeValue)
+			|| type.equalsIgnoreCase(spade.edge.opm.WasGeneratedBy.typeValue)
+			|| type.equalsIgnoreCase(spade.edge.opm.WasTriggeredBy.typeValue)
+			// cdm
+			|| type.equalsIgnoreCase(spade.edge.cdm.SimpleEdge.typeValue)
+			){
+			return true;
+		}else{
+			return false;
+		}
+	}
 }

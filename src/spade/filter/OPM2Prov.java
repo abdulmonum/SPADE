@@ -20,14 +20,16 @@
 
 package spade.filter;
 
-import spade.core.AbstractEdge;
-import spade.core.AbstractVertex;
-import spade.core.Settings;
-import spade.utility.FileUtility;
-
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import spade.core.AbstractEdge;
+import spade.core.AbstractVertex;
+import spade.core.Edge;
+import spade.core.Settings;
+import spade.core.Vertex;
+import spade.utility.FileUtility;
 
 public class OPM2Prov extends OPM2ProvVertexEdge{
 
@@ -48,14 +50,28 @@ public class OPM2Prov extends OPM2ProvVertexEdge{
 
 	@Override
 	public void putVertex(AbstractVertex incomingVertex) {
-		convertAnnotationsInMap(incomingVertex.getAnnotations());
-		super.putVertex(incomingVertex);
+		if(incomingVertex != null){
+			AbstractVertex vertexCopy = new Vertex();
+			Map<String, String> annotationsCopy = incomingVertex.getCopyOfAnnotations();
+			convertAnnotationsInMap(annotationsCopy);
+			vertexCopy.addAnnotations(annotationsCopy);
+			super.putVertex(vertexCopy);
+		}else{
+			super.putVertex(incomingVertex);
+		}
 	}
 
 	@Override
 	public void putEdge(AbstractEdge incomingEdge) {
-		convertAnnotationsInMap(incomingEdge.getAnnotations());
-		super.putEdge(incomingEdge);
+		if(incomingEdge != null){
+			AbstractEdge edgeCopy = new Edge(incomingEdge.getChildVertex(), incomingEdge.getParentVertex());
+			Map<String, String> annotationsCopy = incomingEdge.getCopyOfAnnotations();
+			convertAnnotationsInMap(annotationsCopy);
+			edgeCopy.addAnnotations(annotationsCopy);
+			super.putEdge(incomingEdge);
+		}else{
+			super.putEdge(incomingEdge);
+		}
 	}
 
 	private void convertAnnotationsInMap(Map<String, String> map){

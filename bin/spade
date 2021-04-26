@@ -28,9 +28,9 @@ print_help ()
 	echo "'spade start' : Starts SPADE"
 	echo "'spade stop' : Stops SPADE after buffers empty"
 	echo "'spade kill' : Stops SPADE immediately"
-	echo "'spade java-start' : Starts SPADE daemon (java-based)"
-	echo "'spade java-stop' : Stops SPADE daemon after buffers empty (java-based)"
-	echo "'spade java-kill' : Stops SPADE daemon immediately (java-based)"
+	#echo "'spade java-start' : Starts SPADE daemon (java-based)"
+	#echo "'spade java-stop' : Stops SPADE daemon after buffers empty (java-based)"
+	#echo "'spade java-kill' : Stops SPADE daemon immediately (java-based)"
 	echo "'spade debug' : Starts the SPADE daemon, logs to standard out"
 	echo "'spade control' : Starts an interactive SPADE controller"
 	echo "'spade query' : Starts an interactive command line SPADE query client"
@@ -43,12 +43,12 @@ if [[ `uname` == *"CYGWIN"* ]]
 then
 	SPADE_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )"/../ && pwd )"
 	SPADE_ROOT=`cygpath -w $SPADE_ROOT`
-	CLASSPATH="$SPADE_ROOT\\build;$SPADE_ROOT\\lib\\*;$SPADE_ROOT\\lib\\neo4j-community-3.4.4\\lib\\*"
+	CLASSPATH="$SPADE_ROOT\\lib\\neo4j-community-4.1.1\\lib\\*;$SPADE_ROOT\\build;$SPADE_ROOT\\lib\\*"
 	JAVALIBPATH="$SPADE_ROOT\\lib\\"
 	CYGWIN_JVM_JLINE_ARGS="-Djline.terminal=jline.UnixTerminal"
 else
 	SPADE_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )"/../ && pwd )"
-	CLASSPATH="$SPADE_ROOT/build:$SPADE_ROOT/lib/*:$SPADE_ROOT/lib/neo4j-community-3.4.4/lib/*"
+	CLASSPATH="$SPADE_ROOT/lib/neo4j-community-4.1.1/lib/*:$SPADE_ROOT/build:$SPADE_ROOT/lib/*"
 	JAVALIBPATH="$SPADE_ROOT/lib/"	
 fi
 
@@ -64,12 +64,12 @@ else
 	if [ $1 = "java-start" ] || [ $1 = "java-stop" ] || [ $1 = "java-kill" ] ; then
 		java -Djava.library.path="$JAVALIBPATH" -cp "$CLASSPATH" $JVMARGS spade.utility.Daemonizer "$@"
 	elif [ $1 = "query" ] ; then
-		java -Djava.library.path="$JAVALIBPATH" -cp "$CLASSPATH" $CYGWIN_JVM_JLINE_ARGS spade.client.CommandLine
+		java -Djava.library.path="$JAVALIBPATH" -cp "$CLASSPATH" $CYGWIN_JVM_JLINE_ARGS spade.client.CommandLine "$@"
 	elif [ $1 = "control" ] ; then
 		java -Djava.library.path="$JAVALIBPATH" -cp "$CLASSPATH" $CYGWIN_JVM_JLINE_ARGS spade.client.Control
 	elif [ $1 = "debug" ] ; then
 		java -Djava.library.path="$JAVALIBPATH" -cp "$CLASSPATH" $JVMARGSDEBUG spade.core.Kernel
-	elif [ $1 = "start" ]  || [ $1 = "remote-debug" ] ; then
+	elif [ $1 = "start" ]  || [ $1 = "remote-debug" ] || [ $1 = "unikernel" ] ; then
 		remote_debugging_flags=
 		if [ $1 = "remote-debug" ] ; then
 			remote_debugging_flags="-Xdebug -Xrunjdwp:server=y,transport=dt_socket,address=8000,suspend=n"
@@ -83,9 +83,16 @@ else
 				fi
 			fi
 		fi
+		mainClassName="spade.core.Kernel"
+		if [ $1 = "unikernel" ]; then
+			mainClassName="spade.core.Unikernel"
+		fi
 		if [ "$running" -eq 0 ] ; then
-			nohup java $remote_debugging_flags -Djava.library.path="$JAVALIBPATH" -cp "$CLASSPATH" $JVMARGS spade.core.Kernel 2>&1 > /dev/null &
+			nohup java $remote_debugging_flags -Djava.library.path="$JAVALIBPATH" -cp "$CLASSPATH" $JVMARGS $mainClassName 2>&1 > /dev/null &
 			spadePid=$!
+			if [ $1 = "unikernel" ]; then
+				sleep 1 # wait for it to try to start up
+			fi
 			if ps -p "$spadePid" 2>&1 > /dev/null ; then
 				echo -n $spadePid > $spadePidFilePath
 				echo "Running SPADE with PID = $spadePid"

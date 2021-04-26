@@ -29,9 +29,14 @@ MODULE_LICENSE("GPL");
 
 #define MAX_FIELDS 64
 #define NO_KEY "0"
+#define args_string_len 512
 
+static int nf_handle_user = 0;
+static int nf_hooks = 0;
+static int nf_hooks_log_all_ct = 0;
 static int syscall_success = -1;
 static int net_io = 0;
+static int namespaces = 0;
 static int ignore_uids = 1;
 static int pids_ignore[MAX_FIELDS];
 static int ppids_ignore[MAX_FIELDS];
@@ -61,14 +66,13 @@ int str_equal(const char* h1, const char* h2){
 void print_args(const char* module_name){
 	int a = 0;
 	int args_string_index = 0;
-	int args_string_len = 2048;
 	char args_string[args_string_len];
 
 	memset(&args_string[args_string_index], 0, args_string_len);
 
-	args_string_index += sprintf(&args_string[args_string_index], 
-				"[%s] ARGS : syscall_success = %d, net_io = %d, uid_mode = %s, ", 
-				module_name, syscall_success, net_io, ignore_uids == 1 ? "ignore" : "capture");
+	args_string_index += sprintf(&args_string[args_string_index],
+				"[%s] ARGS : syscall_success = %d, net_io = %d, uid_mode = %s, namespaces = %d, nf_hooks = %d, nf_hooks_log_all_ct = %d, nf_handle_user = %d, ",
+				module_name, syscall_success, net_io, (ignore_uids == 1 ? "ignore" : "capture"), namespaces, nf_hooks, nf_hooks_log_all_ct, nf_handle_user);
 
 	args_string_index += sprintf(&args_string[args_string_index], "pids_ignore = [ ");
 	

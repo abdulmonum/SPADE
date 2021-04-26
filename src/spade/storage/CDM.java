@@ -73,8 +73,8 @@ import spade.core.AbstractVertex;
 import spade.core.Settings;
 import spade.reporter.Audit;
 import spade.reporter.audit.OPMConstants;
-import spade.utility.CommonFunctions;
 import spade.utility.FileUtility;
+import spade.utility.HelperFunctions;
 import spade.utility.HostInfo;
 import spade.vertex.opm.Artifact;
 import spade.vertex.prov.Agent;
@@ -321,16 +321,16 @@ public class CDM extends Kafka {
 			InstrumentationSource source = getInstrumentationSource(edge.getAnnotation(OPMConstants.SOURCE));
 
 			UUID uuid = getUuid(edge);
-			Long sequence = CommonFunctions.parseLong(edge.getAnnotation(OPMConstants.EDGE_EVENT_ID), 0L);
-			Integer threadId = CommonFunctions.parseInt(actingProcess.getAnnotation(OPMConstants.PROCESS_PID), null);
+			Long sequence = HelperFunctions.parseLong(edge.getAnnotation(OPMConstants.EDGE_EVENT_ID), 0L);
+			Integer threadId = HelperFunctions.parseInt(actingProcess.getAnnotation(OPMConstants.PROCESS_PID), null);
 			UUID subjectUUID = getUuid(actingProcess);
 			UUID predicateObjectUUID = getUuid(actedUpon1);
 			String predicateObjectPath = actedUpon1 != null ? actedUpon1.getAnnotation(OPMConstants.ARTIFACT_PATH) : null;
 			UUID predicateObject2UUID = getUuid(actedUpon2);
 			String predicateObject2Path = actedUpon2 != null ? actedUpon2.getAnnotation(OPMConstants.ARTIFACT_PATH) : null;
 			Long timestampNanos = convertTimeToNanoseconds(sequence, edge.getAnnotation(OPMConstants.EDGE_TIME), 0L);
-			Long size = CommonFunctions.parseLong(edge.getAnnotation(OPMConstants.EDGE_SIZE), null);
-			Long location = CommonFunctions.parseLong(edge.getAnnotation(OPMConstants.EDGE_OFFSET), null);
+			Long size = HelperFunctions.parseLong(edge.getAnnotation(OPMConstants.EDGE_SIZE), null);
+			Long location = HelperFunctions.parseLong(edge.getAnnotation(OPMConstants.EDGE_OFFSET), null);
 
 			// validation of mandatory values
 			if(uuid == null || threadId == null || subjectUUID == null 
@@ -344,7 +344,7 @@ public class CDM extends Kafka {
 				// + Adding all annotations to the properties map that have not been added already 
 				// directly to the event
 				Map<CharSequence, CharSequence> properties = new HashMap<CharSequence, CharSequence>();
-				for(String key : edge.getAnnotations().keySet()){
+				for(String key : edge.getCopyOfAnnotations().keySet()){
 					if(!key.equals(OPMConstants.EDGE_EVENT_ID) && !key.equals(OPMConstants.EDGE_TIME) 
 							&& !key.equals(OPMConstants.SOURCE) && !key.equals(OPMConstants.EDGE_PID) && 
 							!key.equals(OPMConstants.EDGE_OPERATION) && !key.equals(OPMConstants.EDGE_SIZE)
@@ -438,7 +438,7 @@ public class CDM extends Kafka {
 			}
 
 			String pidString = process.getAnnotation(OPMConstants.PROCESS_PID);
-			Integer pid = CommonFunctions.parseInt(pidString, null);
+			Integer pid = HelperFunctions.parseInt(pidString, null);
 			if(pid == null){
 				logger.log(Level.WARNING, "Invalid pid {0} for Process {1}", new Object[]{
 						pidString, process
@@ -449,7 +449,7 @@ public class CDM extends Kafka {
 				Long startTime = convertTimeToNanoseconds(null, process.getAnnotation(OPMConstants.PROCESS_START_TIME), 0L);
 
 				String unitIdAnnotation = process.getAnnotation(OPMConstants.PROCESS_UNIT);
-				Integer unitId = CommonFunctions.parseInt(unitIdAnnotation, null);
+				Integer unitId = HelperFunctions.parseInt(unitIdAnnotation, null);
 
 				// meaning that the unit annotation was non-numeric.
 				// Can't simply check for null because null is valid in case units=false in Audit
@@ -459,7 +459,7 @@ public class CDM extends Kafka {
 				}else{
 
 					String iterationAnnotation = process.getAnnotation(OPMConstants.PROCESS_ITERATION);
-					Integer iteration = CommonFunctions.parseInt(iterationAnnotation, null);
+					Integer iteration = HelperFunctions.parseInt(iterationAnnotation, null);
 
 					if(iteration == null && iterationAnnotation != null){
 						logger.log(Level.WARNING, "Unexpected 'iteration' value {0} for process {1}", 
@@ -467,7 +467,7 @@ public class CDM extends Kafka {
 					}else{
 
 						String countAnnotation = process.getAnnotation(OPMConstants.PROCESS_COUNT);
-						Integer count = CommonFunctions.parseInt(countAnnotation, null);
+						Integer count = HelperFunctions.parseInt(countAnnotation, null);
 
 						if(count == null && countAnnotation != null){
 							logger.log(Level.WARNING, "Unexpected 'count' value {0} for process {1}", 
@@ -478,10 +478,11 @@ public class CDM extends Kafka {
 							String ppid = process.getAnnotation(OPMConstants.PROCESS_PPID);
 							
 							Map<CharSequence, CharSequence> properties = new HashMap<>();
-							addIfNotNull(OPMConstants.PROCESS_NAME, process.getAnnotations(), properties);
-							addIfNotNull(OPMConstants.PROCESS_CWD, process.getAnnotations(), properties);
-							addIfNotNull(OPMConstants.PROCESS_PPID, process.getAnnotations(), properties);
-							addIfNotNull(OPMConstants.PROCESS_SEEN_TIME, process.getAnnotations(), properties);
+							final Map<String, String> vertexAnnotationsCopy = process.getCopyOfAnnotations();
+							addIfNotNull(OPMConstants.PROCESS_NAME, vertexAnnotationsCopy, properties);
+							addIfNotNull(OPMConstants.PROCESS_CWD, vertexAnnotationsCopy, properties);
+							addIfNotNull(OPMConstants.PROCESS_PPID, vertexAnnotationsCopy, properties);
+							addIfNotNull(OPMConstants.PROCESS_SEEN_TIME, vertexAnnotationsCopy, properties);
 
 							Subject subject = new Subject(subjectUUID, subjectType, pid, 
 									pidSubjectUUID.get(ppid), principalUUID, startTime, 
@@ -514,9 +515,10 @@ public class CDM extends Kafka {
 			String userId = agentVertex.getAnnotation(OPMConstants.AGENT_UID);
 			if(userId != null){
 				Map<CharSequence, CharSequence> properties = new HashMap<CharSequence, CharSequence>();
-				addIfNotNull(OPMConstants.AGENT_EUID, agentVertex.getAnnotations(), properties);
-				addIfNotNull(OPMConstants.AGENT_SUID, agentVertex.getAnnotations(), properties);
-				addIfNotNull(OPMConstants.AGENT_FSUID, agentVertex.getAnnotations(), properties);
+				final Map<String, String> vertexAnnotationsCopy = agentVertex.getCopyOfAnnotations();
+				addIfNotNull(OPMConstants.AGENT_EUID, vertexAnnotationsCopy, properties);
+				addIfNotNull(OPMConstants.AGENT_SUID, vertexAnnotationsCopy, properties);
+				addIfNotNull(OPMConstants.AGENT_FSUID, vertexAnnotationsCopy, properties);
 
 				List<CharSequence> groupIds = new ArrayList<CharSequence>();
 				if(agentVertex.getAnnotation(OPMConstants.AGENT_GID) != null){
@@ -569,7 +571,7 @@ public class CDM extends Kafka {
 			HostType hostType = HostType.HOST_DESKTOP; // TODO always DESKTOP in AUDIT for now.
 			List<Interface> interfaces = new ArrayList<Interface>();
 			String interfacesCountString = vertex.getAnnotation(OPMConstants.ARTIFACT_HOST_INTERFACES_COUNT);
-			Integer interfacesCount = CommonFunctions.parseInt(interfacesCountString, null);
+			Integer interfacesCount = HelperFunctions.parseInt(interfacesCountString, null);
 			if(interfacesCount != null){
 				for(int a = 0; a < interfacesCount; a++){
 					String interfaceName = vertex.getAnnotation(OPMConstants.buildHostNetworkInterfaceNameKey(a));
@@ -601,7 +603,7 @@ public class CDM extends Kafka {
 		}else{
 			// Make sure all artifacts without epoch are being treated fine. 
 			String epochAnnotation = vertex.getAnnotation(OPMConstants.ARTIFACT_EPOCH);
-			Integer epoch = CommonFunctions.parseInt(epochAnnotation, null);
+			Integer epoch = HelperFunctions.parseInt(epochAnnotation, null);
 			// Non-numeric value for epoch
 			if(epoch == null && epochAnnotation != null){
 				logger.log(Level.WARNING, "Epoch annotation {0} must be of type LONG", new Object[]{epochAnnotation});
@@ -626,13 +628,13 @@ public class CDM extends Kafka {
 					destPort = srcPort == null ? "0" : destPort;
 
 					Map<CharSequence, CharSequence> properties = new HashMap<CharSequence, CharSequence>();
-					addIfNotNull(OPMConstants.ARTIFACT_VERSION, vertex.getAnnotations(), properties);
+					addIfNotNull(OPMConstants.ARTIFACT_VERSION, vertex.getCopyOfAnnotations(), properties);
 
 					AbstractObject baseObject = new AbstractObject(null, epoch, properties);
 
 					tccdmObject = new NetFlowObject(getUuid(vertex), baseObject, 
-							srcAddress, CommonFunctions.parseInt(srcPort, 0), 
-							destAddress, CommonFunctions.parseInt(destPort, 0), protocol, null, null);
+							srcAddress, HelperFunctions.parseInt(srcPort, 0), 
+							destAddress, HelperFunctions.parseInt(destPort, 0), protocol, null, null);
 
 				}else if(OPMConstants.SUBTYPE_MEMORY_ADDRESS.equals(artifactType)){
 
@@ -645,8 +647,9 @@ public class CDM extends Kafka {
 						}
 
 						Map<CharSequence, CharSequence> properties = new HashMap<CharSequence, CharSequence>();
-						addIfNotNull(OPMConstants.ARTIFACT_VERSION, vertex.getAnnotations(), properties);
-						addIfNotNull(OPMConstants.ARTIFACT_TGID, vertex.getAnnotations(), properties);
+						final Map<String, String> copyOfAnnotations = vertex.getCopyOfAnnotations();
+						addIfNotNull(OPMConstants.ARTIFACT_VERSION, copyOfAnnotations, properties);
+						addIfNotNull(OPMConstants.ARTIFACT_TGID, copyOfAnnotations, properties);
 
 						AbstractObject baseObject = new AbstractObject(null, epoch, properties);
 
@@ -664,16 +667,17 @@ public class CDM extends Kafka {
 
 				}else if(OPMConstants.SUBTYPE_UNNAMED_PIPE.equals(artifactType)){
 
-					Integer sourceFileDescriptor = CommonFunctions.parseInt(vertex.getAnnotation(OPMConstants.ARTIFACT_READ_FD), null);
-					Integer sinkFileDescriptor = CommonFunctions.parseInt(vertex.getAnnotation(OPMConstants.ARTIFACT_WRITE_FD), null);
+					Integer sourceFileDescriptor = HelperFunctions.parseInt(vertex.getAnnotation(OPMConstants.ARTIFACT_READ_FD), null);
+					Integer sinkFileDescriptor = HelperFunctions.parseInt(vertex.getAnnotation(OPMConstants.ARTIFACT_WRITE_FD), null);
 
 					if(sourceFileDescriptor == null || sinkFileDescriptor == null){
 						logger.log(Level.WARNING, "Error parsing src/sink fds in artifact {0}", new Object[]{vertex});
 						return false;
 					}else{
 						Map<CharSequence, CharSequence> properties = new HashMap<>();
-						addIfNotNull(OPMConstants.ARTIFACT_VERSION, vertex.getAnnotations(), properties);
-						addIfNotNull(OPMConstants.ARTIFACT_TGID, vertex.getAnnotations(), OPMConstants.ARTIFACT_PID, properties);
+						final Map<String, String> copyOfAnnotations = vertex.getCopyOfAnnotations();
+						addIfNotNull(OPMConstants.ARTIFACT_VERSION, copyOfAnnotations, properties);
+						addIfNotNull(OPMConstants.ARTIFACT_TGID, copyOfAnnotations, OPMConstants.ARTIFACT_PID, properties);
 
 						AbstractObject baseObject = new AbstractObject(null, epoch, properties);
 
@@ -684,8 +688,8 @@ public class CDM extends Kafka {
 				}else if(OPMConstants.SUBTYPE_UNNAMED_NETWORK_SOCKET_PAIR.equals(artifactType)
 						|| OPMConstants.SUBTYPE_UNNAMED_UNIX_SOCKET_PAIR.equals(artifactType)){
 					String tgid = vertex.getAnnotation(OPMConstants.ARTIFACT_TGID);
-					Integer fd0 = CommonFunctions.parseInt(vertex.getAnnotation(OPMConstants.ARTIFACT_FD0), null);
-					Integer fd1 = CommonFunctions.parseInt(vertex.getAnnotation(OPMConstants.ARTIFACT_FD1), null);
+					Integer fd0 = HelperFunctions.parseInt(vertex.getAnnotation(OPMConstants.ARTIFACT_FD0), null);
+					Integer fd1 = HelperFunctions.parseInt(vertex.getAnnotation(OPMConstants.ARTIFACT_FD1), null);
 					if(tgid == null || fd0 == null || fd1 == null){
 						logger.log(Level.WARNING, "Error parsing tgid/fd0/fd1 in artifact {0}", new Object[]{vertex});
 						return false;
@@ -697,7 +701,7 @@ public class CDM extends Kafka {
 						}
 						properties.put(OPMConstants.ARTIFACT_PID, String.valueOf(tgid));
 						properties.put(OPMConstants.ARTIFACT_SUBTYPE, artifactType);
-						addIfNotNull(OPMConstants.ARTIFACT_VERSION, vertex.getAnnotations(), properties);
+						addIfNotNull(OPMConstants.ARTIFACT_VERSION, vertex.getCopyOfAnnotations(), properties);
 						
 						AbstractObject baseObject = new AbstractObject(null, epoch, properties);
 
@@ -706,8 +710,8 @@ public class CDM extends Kafka {
 					}
 				}else if(OPMConstants.SUBTYPE_UNKNOWN.equals(artifactType)){
 
-					Integer tgid = CommonFunctions.parseInt(vertex.getAnnotation(OPMConstants.ARTIFACT_TGID), null);
-					Integer fd = CommonFunctions.parseInt(vertex.getAnnotation(OPMConstants.ARTIFACT_FD), null);
+					Integer tgid = HelperFunctions.parseInt(vertex.getAnnotation(OPMConstants.ARTIFACT_TGID), null);
+					Integer fd = HelperFunctions.parseInt(vertex.getAnnotation(OPMConstants.ARTIFACT_FD), null);
 					if(fd == null || tgid == null){
 						logger.log(Level.WARNING, "Error parsing tgid/fd in artifact {0}", new Object[]{vertex});
 						return false;
@@ -715,7 +719,7 @@ public class CDM extends Kafka {
 
 						Map<CharSequence, CharSequence> properties = new HashMap<CharSequence, CharSequence>();
 						properties.put(OPMConstants.ARTIFACT_PID, String.valueOf(tgid));
-						addIfNotNull(OPMConstants.ARTIFACT_VERSION, vertex.getAnnotations(), properties);	                    		
+						addIfNotNull(OPMConstants.ARTIFACT_VERSION, vertex.getCopyOfAnnotations(), properties);	                    		
 
 						AbstractObject baseObject = new AbstractObject(null, epoch, properties);
 
@@ -729,8 +733,9 @@ public class CDM extends Kafka {
 					SHORT permissions = getPermissionsAsCDMSHORT(permissionsAnnotation);
 
 					Map<CharSequence, CharSequence> properties = new HashMap<>();
-					addIfNotNull(OPMConstants.ARTIFACT_VERSION, vertex.getAnnotations(), properties);
-					addIfNotNull(OPMConstants.ARTIFACT_PATH, vertex.getAnnotations(), properties);
+					final Map<String, String> copyOfAnnotations = vertex.getCopyOfAnnotations();
+					addIfNotNull(OPMConstants.ARTIFACT_VERSION, copyOfAnnotations, properties);
+					addIfNotNull(OPMConstants.ARTIFACT_PATH, copyOfAnnotations, properties);
 
 					AbstractObject baseObject = new AbstractObject(permissions, epoch, properties);
 
@@ -935,7 +940,7 @@ public class CDM extends Kafka {
 
 	@Override
 	public boolean initialize(String arguments){
-		Map<String, String> argumentsMap = CommonFunctions.parseKeyValPairs(arguments);
+		Map<String, String> argumentsMap = HelperFunctions.parseKeyValPairs(arguments);
 		String hexUUIDsArgValue = argumentsMap.get("hexUUIDs");
 		if(hexUUIDsArgValue != null){
 			hexUUIDsArgValue = hexUUIDsArgValue.trim();
@@ -974,7 +979,7 @@ public class CDM extends Kafka {
 		String sessionKey = "session";
 		String sessionNumberString = argumentsMap.get(sessionKey);
 		if(sessionNumberString != null){
-			Integer sessionNumber = CommonFunctions.parseInt(sessionNumberString, null);
+			Integer sessionNumber = HelperFunctions.parseInt(sessionNumberString, null);
 			if(sessionNumber == null){
 				logger.log(Level.SEVERE, "'"+sessionKey+"' must be an 'int': " + sessionNumberString);
 				return false;
@@ -985,7 +990,7 @@ public class CDM extends Kafka {
 			if(cdmOutFileKeyValues != null){
 				String lastSessionString = cdmOutFileKeyValues.get(lastSessionKey);
 				if(lastSessionString != null){
-					Integer lastSessionInteger = CommonFunctions.parseInt(lastSessionString, null);
+					Integer lastSessionInteger = HelperFunctions.parseInt(lastSessionString, null);
 					if(lastSessionInteger == null){
 						logger.log(Level.SEVERE, "Invalid '"+lastSessionKey+"' value '"+lastSessionString+
 								"' in file: " + cdmOutFilePath);
@@ -1121,7 +1126,7 @@ public class CDM extends Kafka {
 	
 	private boolean writeOutFile(String outFilePath, Map<String, String> keyValues){
 		try{
-			List<String> lines = CommonFunctions.mapToLines(keyValues, "=");
+			List<String> lines = HelperFunctions.mapToLines(keyValues, "=");
 			if(lines == null){
 				logger.log(Level.SEVERE, "NULL map for writing out to CDM storage output file");
 				return false;
@@ -1200,7 +1205,7 @@ public class CDM extends Kafka {
 	 * @return true if successfully published. false if failed to publish or didn't publish
 	 */
 	@Override
-	public boolean putVertex(AbstractVertex incomingVertex) {
+	public boolean storeVertex(AbstractVertex incomingVertex) {
 		printStats(false);
 		currentVerticesAndEdges.add(incomingVertex);
 		return true;
@@ -1242,7 +1247,7 @@ public class CDM extends Kafka {
 	 * @return false if edge is null or is missing the time and event id annotations
 	 */
 	@Override
-	public boolean putEdge(AbstractEdge edge){
+	public boolean storeEdge(AbstractEdge edge){
 		printStats(false);
 		// ASSUMPTION that all edges for the same event are contiguously sent (Audit follows this)
 

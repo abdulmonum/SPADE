@@ -19,12 +19,6 @@
  */
 package spade.filter;
 
-import spade.core.AbstractEdge;
-import spade.core.AbstractFilter;
-import spade.core.AbstractVertex;
-import spade.core.Settings;
-import spade.core.Vertex;
-
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.util.HashMap;
@@ -33,15 +27,20 @@ import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import spade.core.AbstractEdge;
+import spade.core.AbstractFilter;
+import spade.core.AbstractVertex;
+import spade.core.Settings;
+import spade.core.Vertex;
+
 public class Fusion extends AbstractFilter {
 
     private LinkedList<Object> leftList;
     private LinkedList<Object> rightList;
     private Map<AbstractVertex, AbstractVertex> fusedVertices;
     private Map<RuleIdentifier, RuleIdentifier> rules;
-    private static final String SPADE_ROOT = Settings.getProperty("spade_root");
-    private final String configFile = SPADE_ROOT + "cfg/fusion.config";
-    private final String SOURCE_REPORTER = Settings.getProperty("source_reporter");
+    private final String configFile = Settings.getDefaultConfigFilePath(this.getClass());
+    private final String SOURCE_REPORTER = Settings.getSourceReporter();
     private int MAX_LIST_LENGTH = 5;
     private String leftReporter;
     private String rightReporter;
@@ -204,8 +203,8 @@ public class Fusion extends AbstractFilter {
         // vertices. The 'source reporter' annotation is changed to reflect that
         // this vertex is now fused
         AbstractVertex fusedVertex = new Vertex();
-        fusedVertex.getAnnotations().putAll(firstVertex.getAnnotations());
-        fusedVertex.getAnnotations().putAll(secondVertex.getAnnotations());
+        fusedVertex.addAnnotations(firstVertex.getCopyOfAnnotations());
+        fusedVertex.addAnnotations(secondVertex.getCopyOfAnnotations());
         fusedVertex.addAnnotation(SOURCE_REPORTER, FUSED_SOURCE_REPORTER);
 
         // Create references to the two lists which are assigned by evaluating

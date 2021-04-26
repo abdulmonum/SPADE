@@ -16,254 +16,411 @@
  */
 package spade.core;
 
-import spade.client.QueryMetaData;
-import spade.utility.DiscrepancyDetector;
-
-import javax.net.ssl.SSLServerSocket;
+import java.io.ByteArrayOutputStream;
+import java.io.EOFException;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import static spade.core.Kernel.CONFIG_PATH;
-import static spade.core.Kernel.FILE_SEPARATOR;
-import static spade.core.Kernel.sslServerSocketFactory;
+import spade.client.QueryMetaData;
+import spade.utility.FileUtility;
+import spade.utility.HelperFunctions;
+import spade.utility.Result;
 
 /**
  * @author raza
  */
-public abstract class AbstractAnalyzer
-{
-    public String QUERY_PORT;
-    protected AbstractResolver remoteResolver;
-    protected volatile boolean SHUTDOWN = false;
-    private static Map<String, List<String>> functionToClassMap;
-    protected static boolean EXPORT_RESULT = false;
-    public static final String COMPARISON_OPERATORS = "=|>|<|>=|<=";
-    public static final String BOOLEAN_OPERATORS = "AND|OR";
-    protected static final DiscrepancyDetector discrepancyDetector = new DiscrepancyDetector();
-    protected static Properties databaseConfigs = new Properties();
-    private static String configFile = CONFIG_PATH + FILE_SEPARATOR + "spade.core.AbstractAnalyzer.config";
-    public static boolean USE_SCAFFOLD;
-    public static boolean USE_TRANSFORMER;
-    static
-    {
-        try
-        {
-            databaseConfigs.load(new FileInputStream(configFile));
-            USE_SCAFFOLD = Boolean.parseBoolean(databaseConfigs.getProperty("use_scaffold"));
-            USE_TRANSFORMER = Boolean.parseBoolean(Settings.getProperty("use_transformer"));
-        }
-        catch(Exception ex)
-        {
-            // default settings
-            USE_SCAFFOLD = false;
-            USE_TRANSFORMER = false;
-            Logger.getLogger(AbstractAnalyzer.class.getName()).log(Level.WARNING,
-                    "Loading configurations from the file unsuccessful! Falling back to default settings" , ex);
-        }
-    }
+public abstract class AbstractAnalyzer{
 
-    /**
-     * remoteResolutionRequired is used by query module to signal the Analyzer
-     * to resolve any outstanding remote parts of result graph.
-     */
-    private static boolean remoteResolutionRequired = false;
+	public static enum HelpType{ ALL, CONTROL, CONSTRAINT, GRAPH, ENV }
+	
+	private final Logger logger = Logger.getLogger(this.getClass().getName());
+	
+	private static final String configKeyNameUseScaffold = "use_scaffold";
+	private static final String configKeyNameUseTransformer = "use_transformer";
+	
+	private Boolean useScaffold = null;
+	private Boolean useTransformer = null;
+	
+	// true return means can continue. false return means that cannot continue.
+	private final boolean readGlobalConfigFromConfigFile(Class<? extends AbstractAnalyzer> clazz){
+		if(useScaffold == null || useTransformer == null){
+			String configFilePath = Settings.getDefaultConfigFilePath(clazz);
+			if(configFilePath == null){
+				logger.log(Level.SEVERE, "NULL config file path for class: " + clazz);
+				return false;
+			}else{
+				try{
+					File configFile = new File(configFilePath);
+					if(configFile.exists()){
+						if(configFile.isFile()){
+							try{
+								Map<String, String> configMap = FileUtility.readConfigFileAsKeyValueMap(configFilePath, "=");
+								if(useScaffold == null){
+									if(!setGlobalConfigUseScaffold("config file '"+configFilePath+"'", 
+											configMap.get(configKeyNameUseScaffold))){
+										return false;
+									}
+								}
+								
+								if(useTransformer == null){
+									if(!setGlobalConfigUseTransformer("config file '"+configFilePath+"'", 
+											configMap.get(configKeyNameUseTransformer))){
+										return false;
+									}
+								}
+							}catch(Exception e){
+								logger.log(Level.SEVERE, "Failed to read config file at path: " + configFilePath, e);
+								return false;
+							}
+						}else{
+							logger.log(Level.SEVERE, "Config file exists but is not a file: " + configFilePath);
+							return false;
+						}
+					}
+				}catch(Exception e){
+					logger.log(Level.SEVERE, "Failed to check config file at path: " + configFilePath, e);
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+	
+	// true return means can continue. false return means that cannot continue.
+	private final boolean setGlobalConfigUseScaffold(String valueSource, String value){
+		if(value == null){
+			return true;
+		}else{
+			Result<Boolean> result = HelperFunctions.parseBoolean(value);
+			if(result.error){
+				logger.log(Level.SEVERE, "Invalid boolean value for '"+configKeyNameUseScaffold + "' in " + valueSource);
+				logger.log(Level.SEVERE, result.toErrorString());
+				return false;
+			}else{
+				this.useScaffold = result.result.booleanValue();
+				return true;
+			}
+		}
+	}
+	
+	// true return means can continue. false return means that cannot continue.
+	private final boolean setGlobalConfigUseTransformer(String valueSource, String value){
+		if(value == null){
+			return true;
+		}else{
+			Result<Boolean> result = HelperFunctions.parseBoolean(value);
+			if(result.error){
+				logger.log(Level.SEVERE, "Invalid boolean value for '"+configKeyNameUseTransformer + "' in " + valueSource);
+				logger.log(Level.SEVERE, result.toErrorString());
+				return false;
+			}else{
+				this.useTransformer = result.result.booleanValue();
+				return true;
+			}
+		}
+	}
 
-    public static void setRemoteResolutionRequired()
-    {
-        remoteResolutionRequired = true;
-    }
+	public final boolean initialize(String arguments){
+		Map<String, String> argsMap = HelperFunctions.parseKeyValPairs(arguments);
+		
+		if(!setGlobalConfigUseScaffold("Arguments", argsMap.get(configKeyNameUseScaffold))){
+			return false;
+		}
+		
+		if(!setGlobalConfigUseTransformer("Arguments", argsMap.get(configKeyNameUseTransformer))){
+			return false;
+		}
+		
+		if(!readGlobalConfigFromConfigFile(this.getClass())){
+			return false;
+		}
+		
+		if(!readGlobalConfigFromConfigFile(AbstractAnalyzer.class)){
+			return false;
+		}
+		
+		if(useScaffold == null){
+			logger.log(Level.SEVERE, "NULL '"+configKeyNameUseScaffold+"' value. Must specify in arguments or config files");
+			return false;
+		}
+		
+		if(useTransformer == null){
+			logger.log(Level.SEVERE, "NULL '"+configKeyNameUseTransformer+"' value. Must specify in arguments or config files");
+			return false;
+		}
+		
+		logger.log(Level.INFO, "Arguments: {0}={1}, {2}={3}",
+				new Object[]{
+						configKeyNameUseScaffold, useScaffold,
+						configKeyNameUseTransformer, useTransformer
+				});
+		
+		// Only here if success
+		
+		return this.initializeConcreteAnalyzer(arguments);
+	}
+	
+	public abstract boolean initializeConcreteAnalyzer(String arguments);
 
-    public static void clearRemoteResolutionRequired()
-    {
-        remoteResolutionRequired = false;
-    }
+	public abstract void shutdown();
 
-    public static boolean isRemoteResolutionRequired()
-    {
-        return remoteResolutionRequired;
-    }
+	public abstract class QueryConnection implements Runnable{
+		
+		private static final String commandSetStorage = "set storage <storage_name>";
 
-    public abstract boolean initialize();
+		protected final Logger logger = Logger.getLogger(this.getClass().getName());
 
-    static
-    {
-        // load functionToClassMap here
-        String file_name = "cfg/functionToClassMap";
-        File file = new File(file_name);
-        try
-        {
-            FileInputStream fis = new FileInputStream(file);
-            ObjectInputStream ois = new ObjectInputStream(fis);
-            functionToClassMap = (Map<String, List<String>>) ois.readObject();
-            ois.close();
-            fis.close();
-        }
-        catch(IOException | ClassNotFoundException ex)
-        {
-            functionToClassMap = new HashMap<>();
-            Logger.getLogger(AbstractAnalyzer.class.getName()).log(Level.WARNING, "Unable to read functionToClassMap from file!");
-        }
-    }
+		private AbstractStorage currentStorage;
+		
+		private Query getErrorSPADEQuery(){
+			Query spadeQuery = new Query("<NULL>", "<NULL>", "<NULL>", "<NULL>");
+			spadeQuery.queryFailed("Exiting!");
+			return spadeQuery;
+		}
+		
+		@Override
+		public final void run(){
+			while(!this.isShutdown()){
+				Query spadeQuery = null;
+				try{
+					spadeQuery = readLineFromClient(); // overwrite existing
+				}catch(EOFException eofe){
+					break;
+				}catch(Exception e){
+					if(this.isShutdown()){
+						// here because of shutdown. No error.
+					}else{
+						logger.log(Level.SEVERE, "Failed to read query from client", e);
+					}
+					safeWriteToClient(getErrorSPADEQuery());
+					break;
+				}
+				if(spadeQuery == null){ // End of stream
+					// safeWriteToClient(getErrorSPADEQuery()); // connection closed so cannot write
+					break; // exit while loop
+				}
 
-    public void shutdown()
-    {
-        // store functionToClassMap here
-        String file_name = "cfg/functionToClassMap";
-        File file = new File(file_name);
-        try
-        {
-            FileOutputStream fos = new FileOutputStream(file);
-            ObjectOutputStream oos = new ObjectOutputStream(fos);
-            oos.writeObject(functionToClassMap);
-            oos.flush();
-            oos.close();
-            fos.close();
-        }
-        catch(IOException ex)
-        {
-            Logger.getLogger(AbstractAnalyzer.class.getName()).log(Level.WARNING, "Unable to write functionToClassMap to file!", ex);
-        }
-        // signal to analyzer
-        SHUTDOWN = true;
-    }
+				if(spadeQuery.query.trim().toLowerCase().equals("exit") || spadeQuery.query.trim().toLowerCase().equals("quit")){
+					spadeQuery.querySucceeded("Exiting!");
+					// safeWriteToClient(spadeQuery); // connection closed so cannot write
+					break;
+				}else{
+					final String trimmedQuery = spadeQuery.query.trim();
+					String queryTokens[] = trimmedQuery.split("\\s+", 3);
+					if(queryTokens.length >= 2 && queryTokens[0].toLowerCase().equals("set")
+							&& queryTokens[1].toLowerCase().equals("storage")){
+						final String storageName = queryTokens.length == 3 ? queryTokens[2] : null;
+						safeWriteToClient(setStorage(storageName, spadeQuery));
+						continue;
+					}else if(queryTokens.length == 2 && queryTokens[0].toLowerCase().equals("print")
+							&& queryTokens[1].toLowerCase().equals("storage")){
+						AbstractStorage currentStorage = getCurrentStorage();
+						if(currentStorage == null){
+							spadeQuery.querySucceeded("No current storage set");
+						}else{
+							spadeQuery.querySucceeded(currentStorage.getClass().getSimpleName());
+						}
+						safeWriteToClient(spadeQuery);
+						continue;
+					}else if(queryTokens[0].toLowerCase().equals("help")){
+						try{
+							HelpType helpType = null;
+							if(queryTokens.length > 1){
+								if(queryTokens.length > 2){
+									throw new RuntimeException("Unexpected number of arguments to help command. Expected only one");
+								}
+								helpType = HelpType.valueOf(queryTokens[1].toUpperCase());
+							}else{
+								helpType = HelpType.ALL;
+							}
+							String result = getQueryHelpTextAsString(helpType);
+							spadeQuery.querySucceeded(result);
+						}catch(Exception e){
+							spadeQuery.queryFailed(new RuntimeException("Failed to execute help command: " + e.getMessage()));
+						}
+						safeWriteToClient(spadeQuery);
+						continue;
+					}else{
+						// Some other query
+						AbstractStorage thisStorage = getCurrentStorage();
+						if(thisStorage == null){
+							spadeQuery.queryFailed("No storage set for querying. Use command: '" + commandSetStorage + "'.");
+							safeWriteToClient(spadeQuery);
+						}else{
+							if(!Kernel.isStoragePresent(thisStorage)){
+								try{
+									doQueryingShutdownForCurrentStorage();
+								}catch(Exception e){
+									logger.log(Level.SEVERE,
+											"Failed to successfully shutdown querying for the removed storage: " + "'"
+													+ thisStorage.getClass().getSimpleName() + "'.",
+													e);
+								}
+								setCurrentStorage(null);
+								spadeQuery.queryFailed("Previously set storage '" + thisStorage.getClass().getSimpleName()
+										+ "' has been " + "removed. Use command: '" + commandSetStorage + "'.");
+								safeWriteToClient(spadeQuery);
+							}else{
+								// Can execute query finally
+								try{
+									spadeQuery = executeQuery(spadeQuery);
+									
+									boolean isResultAGraph = spadeQuery != null && spadeQuery.getResult() instanceof spade.core.Graph;
+									if(isResultAGraph){
+										Graph finalGraph = (spade.core.Graph)spadeQuery.getResult();
+										if(useTransformer){
+											finalGraph = iterateTransformers(finalGraph, spadeQuery.getQueryMetaData());
+										}
+										finalGraph.setHostName(Kernel.getHostName()); // Set it here because the graph might be modified by the transformers
+										finalGraph.addSignature(spadeQuery.queryNonce);
 
-    public static void registerFunction(String func_name, String class_name, String ret_type)
-    {
-        functionToClassMap.put(func_name, Arrays.asList(class_name, ret_type));
-    }
+										spadeQuery.updateGraphResult(finalGraph); // Update the query result with the transformed result graph
+									}
+									
+									if(spadeQuery.getError() != null){
+										// Check if exception is serializable
+										try(ObjectOutputStream oos = new ObjectOutputStream(new ByteArrayOutputStream())){
+											oos.writeObject(spadeQuery.getError());
+										}catch(Exception e){
+											// The exception is not serializable
+											if(spadeQuery.getError() instanceof Throwable){
+												try{
+													logger.log(Level.SEVERE, "Non-serializable error", ((Throwable)(spadeQuery.getError())));
+												}catch(Throwable t){
+													
+												}
+												spadeQuery.queryFailed(new Exception("Query error was not serializable. Class '"+spadeQuery.getError().getClass().getName()
+													+"'. Message logged in SPADE log on server."));
+											}else{
+												try{
+													logger.log(Level.SEVERE, "Non-serializable error: " + ((Throwable)(spadeQuery.getError())));
+												}catch(Throwable t){
+													
+												}
+												spadeQuery.queryFailed(new Exception("Query error was not serializable. Class '"+spadeQuery.getError().getClass().getName()+"'"));
+											}
+										}
+									}
+									
+									safeWriteToClient(spadeQuery);
+								}catch(Exception e){
+									logger.log(Level.SEVERE, "Failed to execute query: '" + spadeQuery.query + "'", e);
+									spadeQuery.queryFailed(new Exception("Failed to execute query: " + e.getMessage(), e));
+									safeWriteToClient(spadeQuery);
+								}
+							}
+						}
+					}
+				}
+			}
 
-    public String getFunctionClassName(String functionName)
-    {
-        // key -> values
-        // function name -> function class name, function return type
-        List<String> classInfo = functionToClassMap.get(functionName);
-        if(classInfo == null)
-        {
-            String className;
-            //TODO: create all query classes with abstractanalyzer beforehand
-            if(functionName.equals("GetLineage") || functionName.equals("GetPaths"))
-            {
-                className = "spade.query.common." + functionName;
-                classInfo = Arrays.asList(className, "spade.core.Graph");
-            }
-            else
-            {
-                String storageName = AbstractQuery.getCurrentStorage().getClass().getSimpleName().toLowerCase();
-                className = "spade.query." + storageName + "." + functionName;
-                classInfo = Arrays.asList(className, "java.lang.Object");
-            }
-            try
-            {
-                Class.forName(className);
-                functionToClassMap.put(functionName, classInfo);
-            }
-            catch(ClassNotFoundException ex)
-            {
-                Logger.getLogger(AbstractAnalyzer.class.getName()).log(Level.SEVERE, "Unable to find/load query class!", ex);
-                return null;
-            }
-        }
+			this.shutdown();
 
-        return classInfo.get(0);
-    }
+			// Exited the main loop
+			AbstractStorage thisStorage = getCurrentStorage();
+			if(thisStorage != null){
+				try{
+					doQueryingShutdownForCurrentStorage();
+				}catch(Exception e){
+					logger.log(Level.SEVERE, "Failed to successfully shutdown querying for the removed storage: " + "'"
+							+ thisStorage.getClass().getSimpleName() + "'.", e);
+				}
+				setCurrentStorage(null);
+			}
+		}
 
-    public String getReturnType(String functionName)
-    {
-        List<String> values = functionToClassMap.get(functionName);
-        if(values == null)
-        {
-            String storageName = AbstractQuery.getCurrentStorage().getClass().getSimpleName().toLowerCase();
-            values = Arrays.asList("spade.query." + storageName + "." + functionName, "Object");
-        }
+		public abstract Query readLineFromClient() throws Exception;
 
-        return values.get(1);
-    }
+		public abstract void writeToClient(Query query) throws Exception;
 
-    public static ServerSocket getServerSocket(String socketName)
-    {
-        ServerSocket serverSocket;
-        Integer port = null;
-        try
-        {
-            port = Integer.parseInt(Settings.getProperty(socketName));
-            serverSocket = sslServerSocketFactory.createServerSocket(port);
-            ((SSLServerSocket) serverSocket).setNeedClientAuth(true);
-            Kernel.addServerSocket(serverSocket);
-        }
-        catch(IOException ex)
-        {
-            String message = "Socket " + socketName + " creation unsuccessful at port # " + port;
-            Logger.getLogger(AbstractAnalyzer.class.getName()).log(Level.SEVERE, message, ex);
-            return null;
-        }
+		public abstract void doQueryingSetupForCurrentStorage() throws Exception;
 
-        return serverSocket;
-    }
+		public abstract void doQueryingShutdownForCurrentStorage() throws Exception;
 
-    protected abstract class QueryConnection implements Runnable
-    {
-        protected Socket querySocket;
-        protected Map<String, List<String>> queryParameters;
-        protected String functionName;
-        protected String functionArguments;
-        protected String queryStorage;
-        protected Integer resultLimit = null;
-        protected String direction = null;
-        protected String maxLength = null;
+		public abstract String getQueryHelpTextAsString(HelpType type) throws Exception;
+		public abstract Query executeQuery(Query query) throws Exception;
 
-        public QueryConnection(Socket socket)
-        {
-            querySocket = socket;
-        }
+		public abstract void shutdown();
 
-        @Override
-        public abstract void run();
+		public abstract boolean isShutdown();
 
-        protected abstract boolean parseQuery(String line);
+		private final void safeWriteToClient(Query data){
+			try{
+				writeToClient(data);
+			}catch(Exception e){
+				logger.log(Level.WARNING, "Failed to write to query client: '" + data + "'", e);
+			}
+		}
 
-        protected Graph iterateTransformers(Graph graph, QueryMetaData queryMetaData)
-        {
-            synchronized (Kernel.transformers)
-            {
-                for(int i = 0; i < Kernel.transformers.size(); i++)
-                {
-                    AbstractTransformer transformer = Kernel.transformers.get(i);
-                    if(graph != null)
-                    {
-                        try
-                        {
-                            graph = transformer.transform(graph, queryMetaData);
-                            if(graph != null)
-                            {
-                                //commit after every transformer to enable reading without error
-                                graph.commitIndex();
-                            }
-                        }
-                        catch(Exception ex)
-                        {
-                            Logger.getLogger(QueryConnection.class.getName()).log(Level.SEVERE, "Error in applying transformer!", ex);
-                        }
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
-            }
-            return graph;
-        }
-    }
+		private final Query setStorage(String storageName, Query spadeQuery){
+			if(storageName == null){
+				spadeQuery.queryFailed("Missing storage_name in command: '" + commandSetStorage + "'.");
+				return spadeQuery;
+			}else if(storageName.trim().isEmpty()){
+				spadeQuery.queryFailed("Empty storage_name in command: '" + commandSetStorage + "'.");
+				return spadeQuery;
+			}else{
+				AbstractStorage storage = Kernel.getStorage(storageName);
+				if(storage == null){
+					spadeQuery.queryFailed("Storage '" + storageName + "' not found.");
+					return spadeQuery;
+				}else{
+					if(getCurrentStorage() != null){
+						try{
+							doQueryingShutdownForCurrentStorage();
+						}catch(Exception e){
+							logger.log(Level.SEVERE, "Failed to successfully shutdown querying for storage: " + "'"
+									+ getCurrentStorage().getClass().getSimpleName() + "'.", e);
+						}
+						setCurrentStorage(null);
+					}
+					try{
+						setCurrentStorage(storage);
+						// Current storage set before calling the code below
+						doQueryingSetupForCurrentStorage();
+						spadeQuery.querySucceeded("Storage '" + storageName + "' successfully set for querying.");
+						return spadeQuery;
+					}catch(Exception e){
+						logger.log(Level.SEVERE,
+								"Failed to set storage: " + "'" + storage.getClass().getSimpleName() + "'", e);
+						setCurrentStorage(null); // Undo the set storage in case of an error
+						spadeQuery.queryFailed("Failed to set storage '" + storage.getClass().getSimpleName() + "'. Use command: '"
+						+ commandSetStorage + "'. Error: " + e.getMessage());
+						return spadeQuery;
+					}
+				}
+			}
+		}
+
+		public synchronized final AbstractStorage getCurrentStorage(){
+			return currentStorage;
+		}
+
+		public synchronized final void setCurrentStorage(AbstractStorage storage){
+			this.currentStorage = storage;
+		}
+
+		private Graph iterateTransformers(Graph graph, QueryMetaData queryMetaData){
+			synchronized(Kernel.transformers){
+				for(int i = 0; i < Kernel.transformers.size(); i++){
+					try{
+						AbstractTransformer transformer = Kernel.transformers.get(i);
+						graph = transformer.transform(graph, queryMetaData);
+						if(graph == null){
+							throw new RuntimeException("Graph transformation resulted in NULL graph");
+						}
+					}catch(Exception e){
+						throw new RuntimeException("Failed to apply transformer '"
+								+Kernel.transformers.get(i) == null ? "<NULL transformer>" : Kernel.transformers.get(i).getClass().getSimpleName()
+								+"'", e);
+					}
+				}
+			}
+			return graph;
+		}
+	}
+
 }

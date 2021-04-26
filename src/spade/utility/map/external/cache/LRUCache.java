@@ -19,7 +19,9 @@
  */
 package spade.utility.map.external.cache;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import spade.utility.DoublyLinkedList;
@@ -65,6 +67,16 @@ public class LRUCache<K, V> implements Cache<K, V>{
 			accessOrderedList.makeFirst(node);
 			return value;
 		}
+	}
+
+	public List<K> getKeysInLRUAccessOrder(){
+		final List<K> list = new ArrayList<K>();
+		DoublyLinkedList<CacheEntry<K, V>>.DoublyLinkedListNode<CacheEntry<K, V>> node = accessOrderedList.getFirst();
+		while(node != null){
+			list.add(node.getValue().key);
+			node = accessOrderedList.getNext(node);
+		}
+		return list;
 	}
 
 	// Doesn't modify access list
@@ -122,5 +134,4 @@ public class LRUCache<K, V> implements Cache<K, V>{
 	private CacheEntry<K, V> createCacheEntry(K key, V value){
 		return new CacheEntry<K, V>(key, value);
 	}
-	
 }

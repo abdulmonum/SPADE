@@ -19,17 +19,16 @@
  */
 package spade.filter;
 
-import spade.core.AbstractEdge;
-import spade.core.AbstractFilter;
-import spade.core.AbstractVertex;
-import spade.core.Edge;
-import spade.core.Vertex;
-
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+
+import spade.core.AbstractEdge;
+import spade.core.AbstractFilter;
+import spade.core.AbstractVertex;
+import spade.core.Edge;
 
 public class GraphFinesse extends AbstractFilter {
 
@@ -66,7 +65,7 @@ public class GraphFinesse extends AbstractFilter {
             // We've already seen this vertex.
             return;
         }
-        AbstractVertex copy = copyVertex(incomingVertex);
+        AbstractVertex copy = incomingVertex.copyAsVertex();
         copy.addAnnotation(versionAnnotation, Integer.toString(initialVersion));
         // For comparison purposes, we store the string representation of the 
         // original vertex since the filter may change the version.
@@ -159,17 +158,9 @@ public class GraphFinesse extends AbstractFilter {
         }
     }
 
-    private AbstractVertex copyVertex(AbstractVertex vertex) {
-        AbstractVertex copy = new Vertex();
-        copy.getAnnotations().clear();
-        copy.addAnnotations(vertex.getAnnotations());
-        return copy;
-    }
-
     private AbstractEdge copyEdge(AbstractEdge edge) {
         AbstractEdge copy = new Edge(edge.getChildVertex(), edge.getParentVertex());
-        copy.getAnnotations().clear();
-        copy.addAnnotations(edge.getAnnotations());
+        copy.addAnnotations(edge.getCopyOfAnnotations());
         return copy;
     }
 }

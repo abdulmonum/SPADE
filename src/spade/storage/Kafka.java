@@ -20,12 +20,19 @@
 
 package spade.storage;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 import org.apache.avro.generic.GenericContainer;
 import org.apache.kafka.clients.producer.ProducerConfig;
+
 import spade.core.AbstractEdge;
 import spade.core.AbstractStorage;
 import spade.core.AbstractVertex;
-import spade.core.Graph;
 import spade.core.Settings;
 import spade.storage.kafka.DataWriter;
 import spade.storage.kafka.Edge;
@@ -34,15 +41,8 @@ import spade.storage.kafka.GraphElement;
 import spade.storage.kafka.JsonFileWriter;
 import spade.storage.kafka.ServerWriter;
 import spade.storage.kafka.Vertex;
-import spade.utility.CommonFunctions;
 import spade.utility.FileUtility;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import spade.utility.HelperFunctions;
 
 public class Kafka extends AbstractStorage{
 
@@ -56,8 +56,6 @@ public class Kafka extends AbstractStorage{
 			PRODUCER_ID_KEY = "kafkaproducerid";
 	
 	private static final Logger logger = Logger.getLogger(Kafka.class.getName());
-
-	protected final String SPADE_ROOT = Settings.getProperty("spade_root");
     
     private List<DataWriter> dataWriters = new ArrayList<DataWriter>();
     
@@ -82,7 +80,7 @@ public class Kafka extends AbstractStorage{
 		try {
             arguments = arguments == null ? "" : arguments.trim();
            
-            Map<String, String> passedArguments = CommonFunctions.makeKeysLowerCase(CommonFunctions.parseKeyValPairs(arguments));
+            Map<String, String> passedArguments = HelperFunctions.makeKeysLowerCase(HelperFunctions.parseKeyValPairs(arguments));
             
             //if output file key exists then handle as file 
             if(passedArguments.get(OUTPUT_FILE_KEY) != null){  
@@ -91,7 +89,7 @@ public class Kafka extends AbstractStorage{
             	schemaFilename = schemaFilename == null ? "" : schemaFilename.trim();
             	
             	if(schemaFilename.isEmpty()){
-            		Map<String, String> defaultArguments = CommonFunctions.makeKeysLowerCase(FileUtility.readConfigFileAsKeyValueMap(defaultConfigFilePath, "="));
+            		Map<String, String> defaultArguments = HelperFunctions.makeKeysLowerCase(FileUtility.readConfigFileAsKeyValueMap(defaultConfigFilePath, "="));
             		schemaFilename = defaultArguments.get(SCHEMA_FILE_KEY);
             		if(schemaFilename == null || schemaFilename.trim().isEmpty()){
             			logger.log(Level.WARNING, "Failed to initialize storage. Missing schema file path.");
@@ -129,7 +127,7 @@ public class Kafka extends AbstractStorage{
 	            //if any of the values not gotten from user then get them from the default location
 	            Map<String, String> defaultArguments = null;
 	            if(kafkaServer == null || kafkaProducerID == null || kafkaTopic == null || schemaFilename == null){ 
-	            	defaultArguments = CommonFunctions.makeKeysLowerCase(FileUtility.readConfigFileAsKeyValueMap(defaultConfigFilePath, "="));
+	            	defaultArguments = HelperFunctions.makeKeysLowerCase(FileUtility.readConfigFileAsKeyValueMap(defaultConfigFilePath, "="));
 	            }
 	            
 	            if(kafkaServer == null){
@@ -216,11 +214,11 @@ public class Kafka extends AbstractStorage{
 	}
 	
 	@Override
-	public boolean putVertex(AbstractVertex vertex){
+	public boolean storeVertex(AbstractVertex vertex){
 		try{
 			List<GenericContainer> recordsToPublish = new ArrayList<GenericContainer>();
 			Vertex.Builder vertexBuilder = Vertex.newBuilder();
-			vertexBuilder.setAnnotations(vertex.getAnnotations());
+			vertexBuilder.setAnnotations(vertex.getCopyOfAnnotations());
 			vertexBuilder.setHash(String.valueOf(vertex.bigHashCode()));
 			Vertex kafkaVertex = vertexBuilder.build();
 			recordsToPublish.add(GraphElement.newBuilder().setElement(kafkaVertex).build());
@@ -238,11 +236,11 @@ public class Kafka extends AbstractStorage{
 	}
 
 	@Override
-	public boolean putEdge(AbstractEdge edge){
+	public boolean storeEdge(AbstractEdge edge){
 		try{
 			List<GenericContainer> recordsToPublish = new ArrayList<GenericContainer>();
 			Edge.Builder edgeBuilder = Edge.newBuilder();
-			edgeBuilder.setAnnotations(edge.getAnnotations());
+			edgeBuilder.setAnnotations(edge.getCopyOfAnnotations());
 			edgeBuilder.setChildVertexHash(String.valueOf(edge.getChildVertex().bigHashCode()));
 			edgeBuilder.setParentVertexHash(String.valueOf(edge.getParentVertex().bigHashCode()));
 			edgeBuilder.setHash(String.valueOf(edge.bigHashCode()));
@@ -287,61 +285,6 @@ public class Kafka extends AbstractStorage{
 			}
 		}
 		return success;
-	}
-
-	/**
-	 * This function queries the underlying storage and retrieves the edge
-	 * matching the given criteria.
-	 *
-	 * @param childVertexHash  hash of the source vertex.
-	 * @param parentVertexHash hash of the destination vertex.
-	 * @return returns edge object matching the given vertices OR NULL.
-	 */
-	@Override
-	public AbstractEdge getEdge(String childVertexHash, String parentVertexHash)
-	{
-		return null;
-	}
-
-	/**
-	 * This function queries the underlying storage and retrieves the vertex
-	 * matching the given criteria.
-	 *
-	 * @param vertexHash hash of the vertex to find.
-	 * @return returns vertex object matching the given hash OR NULL.
-	 */
-	@Override
-	public AbstractVertex getVertex(String vertexHash)
-	{
-		return null;
-	}
-
-	/**
-	 * This function finds the children of a given vertex.
-	 * A child is defined as a vertex which is the source of a
-	 * direct edge between itself and the given vertex.
-	 *
-	 * @param parentHash hash of the given vertex
-	 * @return returns graph object containing children of the given vertex OR NULL.
-	 */
-	@Override
-	public Graph getChildren(String parentHash)
-	{
-		return null;
-	}
-
-	/**
-	 * This function finds the parents of a given vertex.
-	 * A parent is defined as a vertex which is the destination of a
-	 * direct edge between itself and the given vertex.
-	 *
-	 * @param childVertexHash hash of the given vertex
-	 * @return returns graph object containing parents of the given vertex OR NULL.
-	 */
-	@Override
-	public Graph getParents(String childVertexHash)
-	{
-		return null;
 	}
 
 }

@@ -20,7 +20,6 @@
 package spade.core;
 
 import java.io.BufferedReader;
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
@@ -29,6 +28,8 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.io.PrintWriter;
+import java.lang.reflect.Constructor;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
@@ -36,10 +37,13 @@ import java.net.SocketTimeoutException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.security.SecureRandom;
+import java.security.cert.Certificate;
 import java.util.AbstractMap.SimpleEntry;
+import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -47,12 +51,10 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.logging.FileHandler;
-import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.logging.SimpleFormatter;
 
+import javax.net.SocketFactory;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLServerSocket;
@@ -61,7 +63,11 @@ import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManagerFactory;
 
 import spade.filter.FinalCommitFilter;
+import spade.query.quickgrail.core.QueryInstructionExecutor;
+import spade.utility.HelperFunctions;
+import spade.utility.HostInfo;
 import spade.utility.LogManager;
+import spade.utility.Result;
 
 /**
  * The SPADE kernel containing the control client and
@@ -72,48 +78,10 @@ import spade.utility.LogManager;
 
 public class Kernel
 {
-
-    static
-    {
-        System.setProperty("java.util.logging.manager", spade.utility.LogManager.class.getName());
-        System.setProperty("java.util.logging.SimpleFormatter.format", "%1$tb %1$td, %1$tY %1$tl:%1$tM:%1$tS %1$Tp %2$s %4$s: %5$s%6$s%n");
-    }
-
-    public static final String SPADE_ROOT = Settings.getProperty("spade_root");
-
-    public static final String FILE_SEPARATOR = String.valueOf(File.separatorChar);
-
-    public static final String DB_ROOT = SPADE_ROOT + "db" + FILE_SEPARATOR;
     /**
-     * Path to log files including the prefix.
+     * Public name for this host.
      */
-    private static final String PID_FILE = "spade.pid";
-
-    /**
-     * Path to configuration files.
-     */
-    public static final String CONFIG_PATH = SPADE_ROOT + FILE_SEPARATOR + "cfg";
-    /**
-     * Path to configuration file for storing state of SPADE instance (includes
-     * currently added modules).
-     */
-    private static final String CONFIG_FILE = CONFIG_PATH + FILE_SEPARATOR + "spade.client.Control.config";
-    /**
-     * Paths to key stores.
-     */
-    private static final String KEYSTORE_PATH = CONFIG_PATH + FILE_SEPARATOR + "ssl";
-    /**
-     * Path to log files.
-     */
-    private static final String LOG_PATH = SPADE_ROOT + FILE_SEPARATOR + "log";
-    /**
-     * Path to log files including the prefix.
-     */
-    private static final String LOG_PREFIX = "SPADE_";
-    /**
-     * Date/time suffix pattern for log files.
-     */
-    private static final String LOG_START_TIME_PATTERN = "MM.dd.yyyy-H.mm.ss";
+    private static String HOST_NAME = null;
     /**
      * Set of reporters active on the local SPADE instance.
      */
@@ -126,20 +94,70 @@ public class Kernel
      * Set of storages active on the local SPADE instance.
      */
     public static Set<AbstractStorage>storages;
+    
+	private static final Object defaultQueryStorageClassLock = new Object();
+	private static Class<? extends AbstractStorage> defaultQueryStorageClass = null;
+	private static final Object defaultQueryStorageLock = new Object();
+	private static AbstractStorage defaultQueryStorage = null;
 
-    public static AbstractStorage getStorage(String storageName)
-    {
-        for(AbstractStorage storage : storages)
-        {
-            // Search for the given storage in the storages set.
-            if(storage.getClass().getSimpleName().equalsIgnoreCase(storageName))
-            {
-                return storage;
+	public static AbstractStorage getDefaultQueryStorage(){
+		synchronized(defaultQueryStorageLock){
+			return defaultQueryStorage;
+		}
+	}
+
+	public static void setDefaultQueryStorage(final AbstractStorage storage){
+		synchronized(defaultQueryStorageLock){
+			defaultQueryStorage = storage;
+		}
+	}
+
+	public static Class<? extends AbstractStorage> getDefaultQueryStorageClass(){
+		synchronized(defaultQueryStorageClassLock){
+			return defaultQueryStorageClass;
+		}
+	}
+
+	public static void setDefaultQueryStorageClass(final Class<? extends AbstractStorage> clazz){
+		synchronized(defaultQueryStorageClassLock){
+			defaultQueryStorageClass = clazz;
+		}
+	}
+    
+	public static AbstractStorage getStorage(String storageName){
+		for(AbstractStorage storage : storages){
+			// Search for the given storage in the storages set.
+			if(storage.getClass().getSimpleName().equalsIgnoreCase(storageName)){
+				return storage;
+			}
+		}
+
+		return null;
+	}
+    
+    public static boolean isStoragePresent(AbstractStorage storage){
+    	for(AbstractStorage existingStorage : storages){
+            // Search for the given storage in the storages set by instance.
+            if(existingStorage == storage){
+                return true;
             }
         }
-
-        return null;
+        return false;
     }
+    
+	public static AbstractReporter findReporter(String reporterName){
+		if(reporters != null){
+			for(AbstractReporter reporter : reporters){
+				// Search for the given storage in the storages set.
+				if(reporter != null){
+					if(reporter.getClass().getSimpleName().equalsIgnoreCase(reporterName)){
+						return reporter;
+					}
+				}
+			}
+		}
+		return null;
+	}
     /**
      * Set of filters active on the local SPADE instance.
      */
@@ -190,7 +208,7 @@ public class Kernel
     private static final int MAIN_THREAD_SLEEP_DELAY = 10;
     private static final int REMOVE_WAIT_DELAY = 100;
     private static final int FIRST_FILTER = 0;
-    private static final Logger logger = Logger.getLogger(Kernel.class.getName());
+    private static Logger logger;
     private static boolean ANDROID_PLATFORM = false;
 
     /**
@@ -199,6 +217,7 @@ public class Kernel
     private static final String ADD_REPORTER_STORAGE_STRING = "add reporter|storage <class name> <initialization arguments>";
     private static final String ADD_FILTER_TRANSFORMER_STRING = "add filter|transformer <class name> position=<number> <initialization arguments>";
     private static final String ADD_ANALYZER_SKETCH_STRING = "add analyzer|sketch <class name>";
+    private static final String SET_QUERY_STORAGE_STRING = "set storage <class name>";
     private static final String REMOVE_REPORTER_STORAGE_SKETCH_ANALYZER_STRING = "remove reporter|analyzer|storage|sketch <class name>";
     private static final String REMOVE_FILTER_TRANSFORMER_STRING = "remove filter|transformer <position number>";
     private static final String LIST_STRING = "list reporters|storages|analyzers|filters|sketches|transformers|all";
@@ -215,7 +234,32 @@ public class Kernel
     public static SSLSocketFactory sslSocketFactory;
     public static SSLServerSocketFactory sslServerSocketFactory;
 
-    private final static int CONTROL_CLIENT_READ_TIMEOUT = 1000; //time to timeout after when reading from the control client socket
+    //time to timeout after when reading from the control client socket
+    private final static int CONTROL_CLIENT_READ_TIMEOUT = 1000;
+
+    // reads name of the host
+	public synchronized static String getHostName(){
+		if(HOST_NAME == null){
+			try{
+				HOST_NAME = HostInfo.getHostName();
+			}catch(Exception e){
+				logger.log(Level.WARNING, "Failed to retrieve host name. Using empty string!", e);
+				HOST_NAME = "";
+			}
+			final String spadeHostFilePath = Settings.getSPADEHostFilePath();
+			try(PrintWriter out = new PrintWriter(spadeHostFilePath)){
+				out.println(HOST_NAME);
+			}catch(Exception e){
+				logger.log(Level.WARNING, "Failed to write host name to file: " + spadeHostFilePath, e);
+			}
+			logger.log(Level.INFO, "SPADE host name: '" + HOST_NAME + "'");
+		}
+		return HOST_NAME;
+	}
+    
+    public static SocketFactory getClientSocketFactory(){
+    	return sslSocketFactory;
+    }
 
     /**
      * The main initialization function.
@@ -226,6 +270,14 @@ public class Kernel
         if (args.length == 1 && args[0].equals("android")) {
             ANDROID_PLATFORM = true;
         }
+
+		try{
+			Settings.initializeLogging();
+		}catch(Exception e){
+			Logger.getLogger(Kernel.class.getName()).log(Level.WARNING, "Failed to initialize SPADE logging. Falling back to JAVA default.", e);
+		}finally{
+			logger = Logger.getLogger(Kernel.class.getName());
+		}
 
         // Set up context for secure connections
         if (!ANDROID_PLATFORM) {
@@ -238,28 +290,8 @@ public class Kernel
             }
         }
 
-        try
-        {
-            // Configure the global exception logger
-
-            String logFilename = System.getProperty("spade.log");
-            if(logFilename == null)
-            {
-                new File(LOG_PATH).mkdirs();
-                Date currentTime = new java.util.Date(System.currentTimeMillis());
-                String logStartTime = new java.text.SimpleDateFormat(LOG_START_TIME_PATTERN).format(currentTime);
-                logFilename = LOG_PATH + FILE_SEPARATOR + LOG_PREFIX + logStartTime + ".log";
-            }
-            final Handler logFileHandler = new FileHandler(logFilename);
-            logFileHandler.setFormatter(new SimpleFormatter());
-            logFileHandler.setLevel(Level.parse(Settings.getProperty("logger_level")));
-            Logger.getLogger("").addHandler(logFileHandler);
-
-        }
-        catch (IOException | SecurityException exception)
-        {
-            System.err.println("Error initializing exception logger");
-        }
+        // Initialize host name
+        getHostName();
 
         registerShutdownThread();
 
@@ -270,25 +302,25 @@ public class Kernel
         registerControlThread();
 
         // Load the SPADE configuration from the default config file.
-        configCommand("config load " + CONFIG_FILE, NullStream.out);
+        final String controlClientConfigFilePath = Settings.getDefaultConfigFilePath(spade.client.Control.class);
+        configCommand("config load " + controlClientConfigFilePath, NullStream.out);
     }
 
     private static void setupKeyStores() throws Exception
     {
-        String KEYSTORE_PATH = CONFIG_PATH + FILE_SEPARATOR + "ssl";
-        String SERVER_PUBLIC_PATH = KEYSTORE_PATH + FILE_SEPARATOR + "server.public";
-        String SERVER_PRIVATE_PATH = KEYSTORE_PATH + FILE_SEPARATOR + "server.private";
-        String CLIENT_PUBLIC_PATH = KEYSTORE_PATH + FILE_SEPARATOR + "client.public";
-        String CLIENT_PRIVATE_PATH = KEYSTORE_PATH + FILE_SEPARATOR + "client.private";
+        String SERVER_PUBLIC_PATH = Settings.getServerPublicKeystorePath();
+        String SERVER_PRIVATE_PATH = Settings.getServerPrivateKeystorePath();
+        String CLIENT_PUBLIC_PATH = Settings.getClientPublicKeystorePath();
+        String CLIENT_PRIVATE_PATH = Settings.getClientPrivateKeystorePath();
 
         serverKeyStorePublic = KeyStore.getInstance("JKS");
-        serverKeyStorePublic.load(new FileInputStream(SERVER_PUBLIC_PATH), "public".toCharArray());
+        serverKeyStorePublic.load(new FileInputStream(SERVER_PUBLIC_PATH), Settings.getPasswordPublicKeystoreAsCharArray());
         serverKeyStorePrivate = KeyStore.getInstance("JKS");
-        serverKeyStorePrivate.load(new FileInputStream(SERVER_PRIVATE_PATH), "private".toCharArray());
+        serverKeyStorePrivate.load(new FileInputStream(SERVER_PRIVATE_PATH), Settings.getPasswordPrivateKeystoreAsCharArray());
         clientKeyStorePublic = KeyStore.getInstance("JKS");
-        clientKeyStorePublic.load(new FileInputStream(CLIENT_PUBLIC_PATH), "public".toCharArray());
+        clientKeyStorePublic.load(new FileInputStream(CLIENT_PUBLIC_PATH), Settings.getPasswordPublicKeystoreAsCharArray());
         clientKeyStorePrivate = KeyStore.getInstance("JKS");
-        clientKeyStorePrivate.load(new FileInputStream(CLIENT_PRIVATE_PATH), "private".toCharArray());
+        clientKeyStorePrivate.load(new FileInputStream(CLIENT_PRIVATE_PATH), Settings.getPasswordPrivateKeystoreAsCharArray());
     }
 
     private static void setupClientSSLContext() throws Exception
@@ -299,7 +331,7 @@ public class Kernel
         TrustManagerFactory tmf = TrustManagerFactory.getInstance("SunX509");
         tmf.init(serverKeyStorePublic);
         KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
-        kmf.init(clientKeyStorePrivate, "private".toCharArray());
+        kmf.init(clientKeyStorePrivate, Settings.getPasswordPrivateKeystoreAsCharArray());
 
         SSLContext sslContext = SSLContext.getInstance("TLS");
         sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), secureRandom);
@@ -314,11 +346,46 @@ public class Kernel
         TrustManagerFactory tmf = TrustManagerFactory.getInstance("SunX509");
         tmf.init(clientKeyStorePublic);
         KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
-        kmf.init(serverKeyStorePrivate, "private".toCharArray());
+        kmf.init(serverKeyStorePrivate, Settings.getPasswordPrivateKeystoreAsCharArray());
 
         SSLContext sslContext = SSLContext.getInstance("TLS");
         sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), secureRandom);
         sslServerSocketFactory = sslContext.getServerSocketFactory();
+    }
+    
+    public static ServerSocket createServerSocket(int listeningPort) throws Exception{
+        ServerSocket serverSocket = sslServerSocketFactory.createServerSocket(listeningPort);
+        ((SSLServerSocket) serverSocket).setNeedClientAuth(true);
+        addServerSocket(serverSocket);
+        return serverSocket;
+    }
+
+    public static PrivateKey getServerPrivateKey(String alias)
+    {
+        try
+        {
+            KeyStore.ProtectionParameter protectionParameter =
+                    new KeyStore.PasswordProtection(Settings.getPasswordPrivateKeystoreAsCharArray());
+            KeyStore.PrivateKeyEntry privateKeyEntry = (KeyStore.PrivateKeyEntry) serverKeyStorePrivate.getEntry(alias, protectionParameter);
+            return privateKeyEntry.getPrivateKey();
+        } catch(Exception ex)
+        {
+            logger.log(Level.SEVERE, "Error getting server private key", ex);
+            return null;
+        }
+    }
+
+    public static PublicKey getServerPublicKey(String alias)
+    {
+        try
+        {
+            Certificate certificate = serverKeyStorePublic.getCertificate(alias);
+            return certificate.getPublicKey();
+        } catch(Exception ex)
+        {
+            logger.log(Level.SEVERE, "Error getting server public key", ex);
+            return null;
+        }
     }
 
     public static void addServerSocket(ServerSocket socket)
@@ -384,18 +451,18 @@ public class Kernel
                 {
                     while (true)
                     {
-                        if (flushTransactions)
-                        {
-                            // Flushing of transactions is also handled by this thread to ensure that
-                            // there are no errors/problems when using storages that are sensitive to
-                            // thread-context for their transactions.
-                            // For example, this is true for the embedded neo4j graph database.
-                            for (AbstractStorage currentStorage : storages)
-                            {
-                                currentStorage.flushTransactions();
-                            }
-                            flushTransactions = false;
-                        }
+//                        if (flushTransactions)
+//                        {
+//                            // Flushing of transactions is also handled by this thread to ensure that
+//                            // there are no errors/problems when using storages that are sensitive to
+//                            // thread-context for their transactions.
+//                            // For example, this is true for the embedded neo4j graph database.
+//                            for (AbstractStorage currentStorage : storages)
+//                            {
+//                                currentStorage.flushTransactions(false);
+//                            }
+//                            flushTransactions = false;
+//                        }
 
                         if (!removeStorages.isEmpty())
                         {
@@ -405,6 +472,7 @@ public class Kernel
                             while(iterator.hasNext())
                             {
                                 AbstractStorage currentStorage = iterator.next();
+                                AbstractScreen.shutdownScreens(currentStorage.getScreens());
                                 currentStorage.shutdown();
                                 iterator.remove();
                             }
@@ -500,7 +568,7 @@ public class Kernel
                 try
                 {
                     ServerSocket serverSocket = null;
-                    int port = Integer.parseInt(Settings.getProperty("local_control_port"));
+                    int port = Settings.getLocalControlPort();
                     if (ANDROID_PLATFORM)
                     {
                         serverSocket = new ServerSocket(port);
@@ -546,7 +614,7 @@ public class Kernel
      */
     public static void executeCommand(String line, PrintStream outputStream)
     {
-        String commandPrefix = line.split(" ", 2)[0].toLowerCase();
+        String commandPrefix = line.split("\\s+", 2)[0].toLowerCase();
         switch(commandPrefix)
         {
             case "add":
@@ -564,7 +632,18 @@ public class Kernel
             case "config":
                 configCommand(line, outputStream);
                 break;
-
+                
+            case "set":
+            	String tokens[] = line.split("\\s+", 3);
+            	if(tokens.length > 2){ // at least 3
+            		String storageToken = tokens[1].toLowerCase();
+            		if(storageToken.equalsIgnoreCase("storage")){
+            			setQueryStorageCommand(line, outputStream);
+                    	break;
+            		}
+                	// Fall down to default. Invalid query because the second word must be storage.
+            	}
+            	// Fall down to default because 'set' must be followed by an extra word. If it doesn't then it in an invalid query.
             default:
                 outputStream.print(getControlCommands()); 
                 // Don't do println because new line already added to the control commands list
@@ -635,6 +714,10 @@ public class Kernel
                 try
                 {
                     FileWriter configWriter = new FileWriter(fileName, false);
+                    // Write out the default query storage first
+                    if(Kernel.getDefaultQueryStorageClass() != null){
+                    	configWriter.write("set storage " + Kernel.getDefaultQueryStorageClass().getSimpleName() + "\n");
+                    }
                     for (int filter = 0; filter < filters.size() - 1; filter++)
                     {
                         String arguments = filters.get(filter).arguments;
@@ -678,7 +761,7 @@ public class Kernel
                         for(int transformer = 0; transformer < transformers.size(); transformer++)
                         {
                             String arguments = transformers.get(transformer).arguments;
-                            configWriter.write("add transformer " + transformers.get(transformer).getClass().getName().split("\\.")[2] + " " + (transformer + 1));
+                            configWriter.write("add transformer " + transformers.get(transformer).getClass().getName().split("\\.")[2] + " position=" + (transformer + 1));
                             if(arguments != null)
                             {
                                 configWriter.write(" " + arguments.trim());
@@ -696,12 +779,97 @@ public class Kernel
                 }
                 outputStream.println("done");
                 break;
-
+            
+            case "get":
+            case "set":
+            case "unset":{
+            	configGetSetCommand(outputStream, line);
+            }
+            break;
+                
             default:
-                outputStream.println("Usage:");
-                outputStream.println("\t" + CONFIG_STRING);
-                logger.log(Level.INFO, "Usage not appropriate");
+            	printConfigCommandUsage(outputStream);
+                break;
         }
+    }
+    
+    private static enum ConfigPropertyOperation{ GET, SET, UNSET };
+    private final static void configGetSetCommand(final PrintStream outputStream, final String line){
+    	final String tokens[] = line.split("\\s+");
+    	final int tokensLength = tokens.length;
+    	if(tokensLength > 0){
+    		if(tokens[0].equalsIgnoreCase("config")){
+    			if(tokensLength > 1){
+    				Result<ConfigPropertyOperation> propertyOperationResult = 
+    						HelperFunctions.parseEnumValue(ConfigPropertyOperation.class, tokens[1], true);
+    				if(!propertyOperationResult.error){
+    					if(tokensLength > 2){
+    						final String moduleType = tokens[2];
+    						if(moduleType.equalsIgnoreCase("reporter")){
+    							if(tokensLength > 3){
+    								final String reporterName = tokens[3];
+    								final AbstractReporter reporter = findReporter(reporterName);
+    								if(reporter != null){
+    									if(tokensLength > 4){
+    										final String propertyName = tokens[4];
+    										if(propertyOperationResult.result.equals(ConfigPropertyOperation.GET)){
+    											try{
+    												final Object value = reporter.getProperty(propertyName);
+    												final String msg = 
+    														(value == null)
+    														? ("'" + propertyName + "' is NULL")
+    														: ("'" + propertyName + "' = '" + value + "'");
+    												outputStream.println(msg);
+    							                    logger.log(Level.INFO, "[GET] '" + reporterName + "' " + moduleType + ". " + msg);
+    							                    return; // return here!!!
+    											}catch(final Exception e){
+    												logger.log(Level.WARNING, 
+    														"Failed to get '" + reporterName + "' "+ moduleType + " property '"+propertyName+"'", e);
+    											}
+											}else if(propertyOperationResult.result.equals(ConfigPropertyOperation.SET)){
+												if(tokensLength > 5){
+													final String[] limitedTokens = line.split("\\s+", 6);
+													final String propertyValue = limitedTokens[5];
+													try{
+														reporter.setProperty(propertyName, propertyValue);
+														final String msg = "'" + propertyName + "' = '" + propertyValue + "'";
+	    												outputStream.println("OK");
+	    							                    logger.log(Level.INFO, "[SET] '" + reporterName + "' " + moduleType + ". " + msg);
+	    							                    return; // return here!!!
+													}catch(Exception e){
+														logger.log(Level.WARNING, 
+	    														"Failed to set '" + reporterName + "' "+ moduleType + " property '"+propertyName+"' value '"+propertyValue+"'", e);
+													}
+												}
+											}else if(propertyOperationResult.result.equals(ConfigPropertyOperation.UNSET)){
+												try{
+													reporter.unsetProperty(propertyName);
+    												final String msg = "'" + propertyName + "' = '";
+    												outputStream.println("OK");
+    							                    logger.log(Level.INFO, "[UNSET] '" + reporterName + "' " + moduleType + ". " + msg);
+    							                    return; // return here!!!
+    											}catch(final Exception e){
+    												logger.log(Level.WARNING, 
+    														"Failed to unset '" + reporterName + "' "+ moduleType + " property '"+propertyName+"'", e);
+    											}
+											}
+    									}
+    								}
+    							}
+    						}
+    					}
+    				}
+    			}
+    		}
+    	}
+    	// here only case of unknown command
+    	printConfigCommandUsage(outputStream);
+    }
+
+    private final static void printConfigCommandUsage(final PrintStream outputStream){
+    	outputStream.println("Usage:");
+        outputStream.println("\t" + CONFIG_STRING);
+        logger.log(Level.INFO, "Usage not appropriate");
     }
 
     /**
@@ -718,6 +886,7 @@ public class Kernel
         string.append("\t" + ADD_REPORTER_STORAGE_STRING + "\n");
         string.append("\t" + ADD_ANALYZER_SKETCH_STRING + "\n");
         string.append("\t" + ADD_FILTER_TRANSFORMER_STRING + "\n");
+        string.append("\t" + SET_QUERY_STORAGE_STRING + "\n");
         string.append("\t" + REMOVE_REPORTER_STORAGE_SKETCH_ANALYZER_STRING + "\n");
         string.append("\t" + REMOVE_FILTER_TRANSFORMER_STRING + "\n");
         string.append("\t" + LIST_STRING + "\n");
@@ -767,6 +936,230 @@ public class Kernel
         }
     }
 
+	private static void addReporterCommand(final PrintStream outputStream, final String classNameString,
+			final String argumentsString){
+		if(outputStream == null){
+			logger.log(Level.SEVERE, "NULL output stream for client");
+			return;
+		}
+		if(HelperFunctions.isNullOrEmpty(classNameString)){
+			logger.log(Level.SEVERE, "NULL/Empty reporter class name: '" + classNameString + "'");
+			return;
+		}
+		final String arguments = argumentsString == null ? "" : argumentsString;
+
+		////
+
+		logger.log(Level.INFO, "Adding reporter: {0}", classNameString);
+		outputStream.print("Adding reporter " + classNameString + "... ");
+
+		final Class<AbstractReporter> classObject;
+		try{
+			classObject = (Class<AbstractReporter>)Class.forName("spade.reporter." + classNameString);
+		}catch(Throwable t){
+			outputStream.println("error: Unable to find/load class");
+			logger.log(Level.SEVERE, "error: Unable to find/load class: " + classNameString, t);
+			return;
+		}
+
+		final Constructor<AbstractReporter> constructor;
+		try{
+			constructor = classObject.getDeclaredConstructor();
+		}catch(Throwable t){
+			outputStream.println("error: Unable to reflect on class. Illegal implementation");
+			logger.log(Level.SEVERE, "error: Unable to reflect on class. Illegal implementation for '" + classObject
+					+ "'. Must have an empty public constructor", t);
+			return;
+		}
+
+		////
+		
+		final Map<String, SimpleEntry<String, String>> configMapWithSources;
+		try{
+			configMapWithSources = 
+					HelperFunctions.parseKeyValuePairsFromAndGetSources(
+							arguments, 
+							Settings.getDefaultConfigFilePath(classObject), 
+							Settings.getDefaultConfigFilePath(AbstractReporter.class)
+							);
+		}catch(Throwable t){
+			outputStream.println("error: Failed to construct reporter arguments. " + t.getMessage());
+			logger.log(Level.SEVERE, "error: Failed to construct reporter arguments", t);
+			return;
+		}
+
+		final Buffer buffer;
+		final String bufferConfigKey = BlockingBuffer.keyWorkableFreeMemoryPercentageForBuffer;
+		final SimpleEntry<String, String> bufferConfigValueEntry = configMapWithSources.get(bufferConfigKey);
+		
+		if(bufferConfigValueEntry == null){
+			buffer = new Buffer();
+			logger.log(Level.INFO, "Default (unlimited) buffer used for reporter '"+classNameString+"'");
+		}else{
+			final String bufferValue = bufferConfigValueEntry.getKey();
+			final String bufferValueSource = bufferConfigValueEntry.getValue();
+			try{
+				buffer = new BlockingBuffer(bufferValue, classObject);
+				logger.log(Level.INFO, "Memory usage limited buffer used for reporter '" + classNameString + "' with "
+						+ "'" + bufferConfigKey + "'='" + bufferValue + "' from '" + bufferValueSource + "'");
+			}catch(Throwable t){
+				outputStream.println("error: Unable to create buffer using '" + bufferConfigKey + "' = "
+						+ "'" + bufferValue + "' from '" + bufferValueSource + "'. " + t.getMessage());
+				logger.log(Level.SEVERE, "error: Unable to create buffer using '" + bufferConfigKey + "' = "
+						+ "'" + bufferValue + "' from '" + bufferValueSource + "'. " + classObject, t);
+				return;
+			}
+		}
+
+		final AbstractReporter reporter;
+		try{
+			reporter = constructor.newInstance();
+		}catch(Throwable t){
+			outputStream.println("error: Unable to instantiate class");
+			logger.log(Level.SEVERE, "error: Unable to instantiate class using the empty constructor: " + classObject, t);
+			return;
+		}
+
+		reporter.setBuffer(buffer);
+
+		final boolean launchResult;
+
+		try{
+			launchResult = reporter.launch(arguments);
+		}catch(Throwable t){
+			logger.log(Level.SEVERE, "Unable to launch reporter", t);
+			outputStream.println("failed. " + t.getMessage());
+			return;
+		}
+
+		if(launchResult){
+			// The launch() method must return true to indicate a successful launch.
+			// On true, the reporter is added to the reporters set and the buffer
+			// is put into a HashMap keyed by the reporter. This is used by the main
+			// SPADE thread to extract buffer elements.
+			reporter.arguments = arguments;
+			reporters.add(reporter);
+			logger.log(Level.INFO, "Reporter added: {0}", classNameString + " " + arguments);
+			outputStream.println("done");
+			return;
+		}else{
+			logger.log(Level.SEVERE, "Unable to launch reporter");
+			outputStream.println("failed");
+			return;
+		}
+	}
+
+	private static void addStorageCommand(final PrintStream outputStream, final String classNameString,
+			final String argumentsString){
+		if(outputStream == null){
+			logger.log(Level.SEVERE, "NULL output stream for client");
+			return;
+		}
+		if(HelperFunctions.isNullOrEmpty(classNameString)){
+			logger.log(Level.SEVERE, "NULL/Empty storage class name: '" + classNameString + "'");
+			return;
+		}
+		final String arguments = argumentsString == null ? "" : argumentsString;
+
+		////
+
+		logger.log(Level.INFO, "Adding storage: {0}", classNameString);
+		outputStream.print("Adding storage " + classNameString + "... ");
+
+		final Class<AbstractStorage> classObject;
+		try{
+			classObject = (Class<AbstractStorage>)Class.forName("spade.storage." + classNameString);
+		}catch(Throwable t){
+			outputStream.println("error: Unable to find/load class");
+			logger.log(Level.SEVERE, "error: Unable to find/load class: " + classNameString, t);
+			return;
+		}
+
+		final Constructor<AbstractStorage> constructor;
+		try{
+			constructor = classObject.getDeclaredConstructor();
+		}catch(Throwable t){
+			outputStream.println("error: Unable to reflect on class. Illegal implementation");
+			logger.log(Level.SEVERE, "error: Unable to reflect on class. Illegal implementation for '" + classObject
+					+ "'. Must have an empty public constructor", t);
+			return;
+		}
+		
+		final AbstractStorage storage;
+		try{
+			storage = constructor.newInstance();
+		}catch(Throwable t){
+			outputStream.println("error: Unable to instantiate class");
+			logger.log(Level.SEVERE, "error: Unable to instantiate class using the empty constructor: " + classObject, t);
+			return;
+		}
+
+		////
+		
+		final Result<ArrayList<String>> screensArgumentsInOrderResult = AbstractScreen.parseScreensInOrder(arguments, classObject);
+		if(screensArgumentsInOrderResult.error){
+			outputStream.println("error: Failed to parse screen arguments for the storage");
+			logger.log(Level.SEVERE, "error: Failed to parse screen arguments for the storage: " + screensArgumentsInOrderResult.toErrorString());
+			return;
+		}
+		
+		final Result<ArrayList<AbstractScreen>> screensResult = AbstractScreen.initializeScreensInOrder(screensArgumentsInOrderResult.result);
+		if(screensResult.error){
+			outputStream.println("error: Failed to initialize screen(s) for the storage");
+			logger.log(Level.SEVERE, "error: Failed to initialize screen(s) for the storage: " + screensResult.toErrorString());
+			return;
+		}
+
+		storage.addScreens(screensResult.result);
+
+		try{
+			if(!storage.initialize(arguments)){
+				throw new Exception("Failed to initialize storage");
+			}
+		}catch(Exception | Error ex){
+			logger.log(Level.SEVERE, "Unable to initialize storage!", ex);
+			outputStream.println("failed");
+			storage.clearScreens();
+			AbstractScreen.shutdownScreens(screensResult.result);
+			return;
+		}
+
+		boolean setAsDefaultQuery = false;
+		// If the storage classes match and the storage instance is not set for querying
+		// only then do the following.
+		if(storage.getClass().equals(Kernel.getDefaultQueryStorageClass()) && Kernel.getDefaultQueryStorage() == null){
+			try{
+				final QueryInstructionExecutor instructionExecutor = storage.getQueryInstructionExecutor();
+				if(instructionExecutor == null){
+					throw new RuntimeException("NULL query executor");
+				}else{
+					Kernel.setDefaultQueryStorage(storage);
+					setAsDefaultQuery = true;
+					logger.log(Level.INFO, "Storage '" + storage.getClass().getSimpleName()
+							+ "' successfully set as default" + " for querying.");
+				}
+			}catch(Throwable t){
+				logger.log(Level.WARNING,
+						"Query storage not set for '" + Kernel.getDefaultQueryStorageClass().getSimpleName() + "'.", t);
+			}
+		}
+		// The initialize() method must return true to indicate
+		// successful startup.
+		storage.arguments = arguments;
+		storage.vertexCount = 0;
+		storage.edgeCount = 0;
+		
+		storages.add(storage);
+		
+		final List<String> screenNames = HelperFunctions.getListOfClassNames(screensResult.result);
+		
+		logger.log(Level.INFO, "Storage added: " + storage.getClass() + " " + arguments + ". Using screens: " + screenNames);
+		outputStream.println("done." 
+				+ (!setAsDefaultQuery ? "" : " [ Querying default ]")
+				+ (" Screens:" + (screenNames.isEmpty() ? "NONE" : screenNames.toString()))
+				);
+	}
+	
     /**
      * Method to add modules.
      *
@@ -795,115 +1188,42 @@ public class Kernel
         switch (moduleName)
         {
             case "reporter":
-                arguments = (tokens.length == 3) ? null : tokens[3];
-                logger.log(Level.INFO, "Adding reporter: {0}", className);
-                outputStream.print("Adding reporter " + className + "... ");
-                AbstractReporter reporter;
-                try
-                {
-                    reporter = (AbstractReporter) Class.forName("spade.reporter." + className).newInstance();
-                }
-                catch (ClassNotFoundException | InstantiationException | IllegalAccessException ex)
-                {
-                    outputStream.println("error: Unable to find/load class");
-                    logger.log(Level.SEVERE, null, ex);
-                    return;
-                }
-                // Create a new buffer and allocate it to this reporter.
-                Buffer buffer = new Buffer();
-                reporter.setBuffer(buffer);
-                if (reporter.launch(arguments))
-                {
-                    // The launch() method must return true to indicate a successful launch.
-                    // On true, the reporter is added to the reporters set and the buffer
-                    // is put into a HashMap keyed by the reporter. This is used by the main
-                    // SPADE thread to extract buffer elements.
-                    reporter.arguments = arguments;
-                    reporters.add(reporter);
-                    logger.log(Level.INFO, "Reporter added: {0}", className + " " + arguments);
-                    outputStream.println("done");
-                }
-                else
-                {
-                    logger.log(Level.SEVERE, "Unable to launch reporter");
-                    outputStream.println("failed");
-                }
-
-                break;
-
+            	arguments = (tokens.length == 3) ? null : tokens[3];
+            	addReporterCommand(outputStream, className, arguments);
+            	break;
             case "analyzer":
-                logger.log(Level.INFO, "Adding analyzer: {0}", className);
-                outputStream.print("Adding analyzer " + className + "... ");
-                AbstractAnalyzer analyzer;
-                try
-                {
-                    analyzer = (AbstractAnalyzer) Class.forName("spade.analyzer." + className).newInstance();
-                    if(analyzer.initialize())
-                    {
-                        analyzers.add(analyzer);
-                        logger.log(Level.INFO, "Analyzer added: {0}", className);
-                        outputStream.println("done");
-                    }
-                    else
-                        outputStream.println("failed");
-                }
-                catch(ClassNotFoundException | InstantiationException | IllegalAccessException ex)
-                {
-                    outputStream.println("error: Unable to find/load class");
-                    logger.log(Level.SEVERE, null, ex);
-                    return;
-                }
+            	arguments = (tokens.length == 3) ? null : tokens[3];
+            	logger.log(Level.INFO, "Adding analyzer: {0}", className);
+            	outputStream.print("Adding analyzer " + className + "... ");
+            	AbstractAnalyzer analyzer;
+            	try
+            	{
+            		Class<? extends AbstractAnalyzer> clazz = 
+            				(Class<? extends AbstractAnalyzer>)Class.forName("spade.analyzer." + className);
+            		Constructor<? extends AbstractAnalyzer> constructor = clazz.getDeclaredConstructor();
+            		analyzer = constructor.newInstance();
+            		if(analyzer.initialize(arguments))
+            		{
+            			analyzers.add(analyzer);
+            			logger.log(Level.INFO, "Analyzer added: {0}", className);
+            			outputStream.println("done");
+            		}
+            		else
+            			outputStream.println("failed");
+            	}catch(Throwable t){
+            		outputStream.println("error: Unable to find/load/initialize class");
+            		outputStream.flush();
+            		logger.log(Level.SEVERE, null, t);
+            		return;
+            	}
+
 
                 break;
 
             case "storage":
                 arguments = (tokens.length == 3) ? null : tokens[3];
-                logger.log(Level.INFO, "Adding storage: {0}", className);
-                outputStream.print("Adding storage " + className + "... ");
-                AbstractStorage storage;
-                try
-                {
-                    storage = (AbstractStorage) Class.forName("spade.storage." + className).newInstance();
-                }
-                catch (Exception ex)
-                {
-                    outputStream.println("Unable to find/load class");
-                    logger.log(Level.SEVERE, null, ex);
-                    return;
-                }
-                catch(Error er)
-                {
-                    outputStream.println("Unable to find/load class");
-                    logger.log(Level.SEVERE, "Unable to find/load class", er);
-                    return;
-                }
-                try
-                {
-                    if(storage.initialize(arguments))
-                    {
-                        // The initialize() method must return true to indicate
-                        // successful startup.
-                        storage.arguments = arguments;
-                        storage.vertexCount = 0;
-                        storage.edgeCount = 0;
-                        storages.add(storage);
-                        logger.log(Level.INFO, "Storage added: {0}", className + " " + arguments);
-                        logger.log(Level.INFO, "currentStorage set to "+ storage.getClass().getName());
-                        outputStream.println("done");
-                    }
-                    else
-                    {
-                        outputStream.println("failed");
-                    }
-                }
-                catch(Exception | Error ex)
-                {
-                    logger.log(Level.SEVERE, "Unable to initialize storage!", ex);
-                    outputStream.println("failed");
-                }
-
+                addStorageCommand(outputStream, className, arguments);
                 break;
-
             case "filter":
                 if (tokens.length < 4)
                 {
@@ -1062,6 +1382,127 @@ public class Kernel
         }
     }
 
+	@SuppressWarnings("unchecked")
+	private static void setQueryStorageCommand(String line, PrintStream outputStream){
+		final String tokens[] = line.split("\\s+", 3);
+		if(tokens.length < 3){
+			outputStream.println("Usage:");
+			outputStream.println("\t" + SET_QUERY_STORAGE_STRING);
+			return;
+		}
+
+		final String storageClassName = tokens[2];
+		
+		logger.log(Level.INFO, "Setting default query storage: {0}", storageClassName);
+		outputStream.print("Setting default query storage " + storageClassName + "... ");
+		
+		if(Kernel.getDefaultQueryStorageClass() == null){
+			try{
+    			Class<? extends AbstractStorage> newQueryStorageClass = 
+    					(Class<? extends AbstractStorage>)Class.forName("spade.storage."+storageClassName);
+    			Kernel.setDefaultQueryStorageClass(newQueryStorageClass);
+    			if(Kernel.getDefaultQueryStorage() != null){
+    				// remove this since the class changed
+    				logger.log(Level.INFO, "Removed existing default query storage: '"+Kernel.getDefaultQueryStorage().getClass().getSimpleName()+"'");
+    				Kernel.setDefaultQueryStorage(null);
+    			}
+    			
+    			AbstractStorage matchingStorage = null;
+    			for(AbstractStorage storage : storages){
+    				if(storage.getClass().getSimpleName().equalsIgnoreCase(storageClassName)){ // Just get the first one (in no order) TODO
+    					matchingStorage = storage;
+    					break;
+    				}
+    			}
+    			
+    			if(matchingStorage != null){
+    				try{
+    	        		QueryInstructionExecutor instructionExecutor = matchingStorage.getQueryInstructionExecutor();
+    	        		if(instructionExecutor == null){
+    	        			throw new RuntimeException("NULL query executor");
+    	        		}else{
+    	        			Kernel.setDefaultQueryStorage(matchingStorage);
+    	        			outputStream.println("done");
+	            			logger.log(Level.INFO, "Storage '"+matchingStorage.getClass().getSimpleName()+"' successfully set as default"
+	            					+ " for querying.");
+	            			return;
+    	        		}
+    	        	}catch(Throwable t){
+    	        		outputStream.println("done but failed to select instance: " + t.getMessage());
+    	        		logger.log(Level.WARNING, "Query storage not set for '"
+    	        				+matchingStorage.getClass().getSimpleName()+"' but the class is set successfully.", t);
+	    				return;
+    	        	}
+    			}else{ // no matching found
+    				outputStream.println("done");
+    				logger.log(Level.INFO, "No matching query storage found and set the class to '"+storageClassName+"'");
+    				return;
+    			}
+    		}catch(Throwable t){
+    			outputStream.println("Unable to find/load class");
+                logger.log(Level.SEVERE, "Invalid class name: '"+storageClassName+"'. ", t);
+                return;
+    		}
+		}else{
+			// There is an existing class
+			if(Kernel.getDefaultQueryStorageClass().getSimpleName().equalsIgnoreCase(storageClassName)){
+				logger.log(Level.INFO, "Class is already the default query storage: " + storageClassName);
+		        outputStream.println("Already set");
+				return;
+				// Don't need to do anything more
+			}else{
+				// If it is different
+				try{
+	    			Class<? extends AbstractStorage> newQueryStorageClass = 
+	    					(Class<? extends AbstractStorage>)Class.forName("spade.storage."+storageClassName);
+	    			Kernel.setDefaultQueryStorageClass(newQueryStorageClass);
+	    			if(Kernel.getDefaultQueryStorage() != null){
+	    				// remove this since the class changed
+	    				logger.log(Level.INFO, "Removed existing default query storage: '"+Kernel.getDefaultQueryStorage().getClass().getSimpleName()+"'");
+	    				Kernel.setDefaultQueryStorage(null);
+	    			}
+	    			
+	    			AbstractStorage matchingStorage = null;
+	    			for(AbstractStorage storage : storages){
+	    				if(storage.getClass().getSimpleName().equalsIgnoreCase(storageClassName)){ // Just get the first one (in no order) TODO
+	    					matchingStorage = storage;
+	    					break;
+	    				}
+	    			}
+	    			
+	    			if(matchingStorage != null){
+	    				try{
+	    	        		QueryInstructionExecutor instructionExecutor = matchingStorage.getQueryInstructionExecutor();
+	    	        		if(instructionExecutor == null){
+	    	        			throw new RuntimeException("NULL query executor");
+	    	        		}else{
+	    	        			Kernel.setDefaultQueryStorage(matchingStorage);
+	    	        			outputStream.println("done");
+    	            			logger.log(Level.INFO, "Storage '"+matchingStorage.getClass().getSimpleName()+"' successfully set as default"
+    	            					+ " for querying.");
+    	            			return;
+	    	        		}
+	    	        	}catch(Throwable t){
+	    	        		outputStream.println("done but failed to select instance: " + t.getMessage());
+	    	        		logger.log(Level.WARNING, "Query storage not set for '"
+	    	        				+matchingStorage.getClass().getSimpleName()+"' but the class is set successfully.", t);
+		    				return;
+	    	        	}
+	    			}else{ // no matching found
+	    				outputStream.println("done");
+	    				logger.log(Level.INFO, "No matching query storage found and set the class to '"+storageClassName+"'");
+	    				return;
+	    			}
+	    		}catch(Throwable t){
+	    			outputStream.println("Unable to find/load class. Kept existing: '"+Kernel.getDefaultQueryStorageClass().getSimpleName()+"'");
+	                logger.log(Level.SEVERE, "Invalid class name: '"+storageClassName+"'. Kept existing: '"
+	                		+Kernel.getDefaultQueryStorageClass().getSimpleName()+"'", t);
+	                return;
+	    		}
+			}
+		}
+	}
+
     /**
      * Method to list modules.
      *
@@ -1136,6 +1577,11 @@ public class Kernel
                     {
                         outputStream.print(" (" + arguments + ")");
                     }
+                    if(storage == Kernel.getDefaultQueryStorage()){
+                    	outputStream.print(" [ Querying default ]");
+                    }
+                    final List<String> screenNames = HelperFunctions.getListOfClassNames(storage.getScreens()); 
+                    outputStream.print((" (Screens:" + (screenNames.isEmpty() ? "NONE" : screenNames.toString()) + ")"));
                     outputStream.println();
                     count++;
                 }
@@ -1227,6 +1673,73 @@ public class Kernel
         }
     }
 
+    private static void removeStorageCommand(final String className, final PrintStream outputStream){
+		boolean found = false;
+		for(Iterator<AbstractStorage> storageIterator = storages.iterator(); storageIterator.hasNext();){
+			final AbstractStorage storage = storageIterator.next();
+			if(storage != null){
+				// Search for the given storage in the storages set.
+				if(storage.getClass().getSimpleName().equals(className)){
+					// Mark the storage for removal by adding it to the removeStorages set.
+					// This will enable the main SPADE thread to safely commit any transactions
+					// and then remove the storage.
+					long vertexCount = storage.vertexCount;
+					long edgeCount = storage.edgeCount;
+					removeStorages.add(storage);
+					found = true;
+					logger.log(Level.INFO, "Shutting down storage: {0}", className);
+					outputStream.print("Shutting down storage " + className + "... ");
+
+					while(removeStorages.contains(storage)){
+						// Wait for other thread to safely remove storage
+						HelperFunctions.sleepSafe(REMOVE_WAIT_DELAY);
+					}
+					storageIterator.remove();
+
+					if(Kernel.getDefaultQueryStorage() == storage){ // Equality by instance
+						// Find the next one with the same class and set to it (if any)
+						AbstractStorage newQueryStorage = null;
+						for(AbstractStorage checkStorage : storages){
+							if(checkStorage.getClass().equals(Kernel.getDefaultQueryStorageClass())){
+								newQueryStorage = checkStorage;
+								break;
+							}
+						}
+						if(newQueryStorage == null){
+							logger.log(Level.WARNING, "Storage '" + storage.getClass().getSimpleName() + "'"
+									+ " removed as the default storage for querying. No default storage for querying.");
+							Kernel.setDefaultQueryStorage(null);
+						}else{
+							try{
+								final QueryInstructionExecutor instructionExecutor = newQueryStorage.getQueryInstructionExecutor();
+								if(instructionExecutor == null){
+									throw new RuntimeException("NULL query executor");
+								}else{
+									logger.log(Level.INFO, "Storage '" + newQueryStorage.getClass().getSimpleName()
+											+ "' successfully set as default" + " for querying.");
+									Kernel.setDefaultQueryStorage(newQueryStorage);
+								}
+							}catch(Throwable t){
+								logger.log(Level.WARNING,
+										"Query storage not set for '" + newQueryStorage.getClass().getSimpleName() + "'.", t);
+								Kernel.setDefaultQueryStorage(null);
+							}
+						}
+					}
+
+					logger.log(Level.INFO, "Storage shut down: {0} ({1} vertices and {2} edges were added)",
+							new Object[]{className, vertexCount, edgeCount});
+					outputStream.println("done (" + vertexCount + " vertices and " + edgeCount + " edges added)");
+					break;
+				}
+			}
+		}
+		if(!found){
+			logger.log(Level.WARNING, "Storage not found (for shutting down): {0}", className);
+			outputStream.println("Storage " + className + " not found");
+		}
+    }
+    
     /**
      * Method to remove modules.
      *
@@ -1263,6 +1776,7 @@ public class Kernel
                             // Mark the reporter for removal by adding it to the removeReporters set.
                             // This will enable the main SPADE thread to cleanly flush the reporter
                             // buffer and remove it.
+                        	reporter.getBuffer().shutdown();
                             reporter.shutdown();
                             removeReporters.add(reporter);
                             found = true;
@@ -1307,7 +1821,7 @@ public class Kernel
                                 Thread.sleep(REMOVE_WAIT_DELAY);
                             }
                             analyzerIterator.remove();
-                            logger.log(Level.INFO, "Analyzer shut down: {0})", className);
+                            logger.log(Level.INFO, "Analyzer shut down: {0}", className);
                             outputStream.println("done");
                             break;
                         }
@@ -1321,43 +1835,7 @@ public class Kernel
                     break;
 
                 case "storage":
-                    found = false;
-                    for (Iterator<AbstractStorage> storageIterator = storages.iterator(); storageIterator.hasNext();)
-                    {
-                        AbstractStorage storage = storageIterator.next();
-                        if(storage != null){
-                            // Search for the given storage in the storages set.
-                            if(storage.getClass().getSimpleName().equals(className))
-                            {
-                                // Mark the storage for removal by adding it to the removeStorages set.
-                                // This will enable the main SPADE thread to safely commit any transactions
-                                // and then remove the storage.
-                                long vertexCount = storage.vertexCount;
-                                long edgeCount = storage.edgeCount;
-                                removeStorages.add(storage);
-                                found = true;
-                                logger.log(Level.INFO, "Shutting down storage: {0}", className);
-                                outputStream.print("Shutting down storage " + className + "... ");
-
-                                while(removeStorages.contains(storage))
-                                {
-                                    // Wait for other thread to safely remove storage
-                                    Thread.sleep(REMOVE_WAIT_DELAY);
-                                }
-                                storageIterator.remove();
-                                logger.log(Level.INFO, "Storage shut down: {0} ({1} vertices and {2} edges were added)",
-                                        new Object[]{className, vertexCount, edgeCount});
-                                outputStream.println("done (" + vertexCount + " vertices and " + edgeCount + " edges added)");
-                                break;
-                            }
-                        }
-                    }
-                    if (!found)
-                    {
-                        logger.log(Level.WARNING, "Storage not found (for shutting down): {0}", className);
-                        outputStream.println("Storage " + className + " not found");
-                    }
-
+                    removeStorageCommand(className, outputStream);
                     break;
 
                 case "filter":
@@ -1473,9 +1951,11 @@ public class Kernel
         logger.log(Level.INFO, "Shutting down SPADE....");
 
         // Save current configuration.
-        configCommand("config save " + CONFIG_FILE, NullStream.out);
+        final String controlClientConfigFilePath = Settings.getDefaultConfigFilePath(spade.client.Control.class);
+        configCommand("config save " + controlClientConfigFilePath, NullStream.out);
         // Shut down all reporters.
         for (AbstractReporter reporter : reporters) {
+        	reporter.getBuffer().shutdown();
             reporter.shutdown();
         }
         // Wait for main thread to consume all provenance data.
@@ -1499,10 +1979,20 @@ public class Kernel
         {
             filters.get(i).shutdown();
         }
+        // Shut down transformers.
+        for (int i = 0; i < transformers.size(); i++)
+        {
+        	transformers.get(i).shutdown();
+        }
         // Shut down storages.
         for (AbstractStorage storage : storages)
         {
+        	long vertexCount = storage.vertexCount;
+            long edgeCount = storage.edgeCount;
+            AbstractScreen.shutdownScreens(storage.getScreens());
             storage.shutdown();
+            logger.log(Level.INFO, "Storage shut down: {0} ({1} vertices and {2} edges were added)",
+                    new Object[]{storage.getClass().getSimpleName(), vertexCount, edgeCount});
         }
         // Shut down analzers.
         for(AbstractAnalyzer analyzer: analyzers)
@@ -1526,17 +2016,19 @@ public class Kernel
 
         try {
 
-            Files.deleteIfExists(Paths.get(PID_FILE));
+            Files.deleteIfExists(Paths.get(Settings.getSPADEProcessIdFilePath()));
         } catch (Exception exception) {
             logger.log(Level.WARNING, "Could not delete PID file.");
         }
 
         // Allow LogManager to complete its response to the shutdown
         LogManager.shutdownReset();
-    }
 
-    public static String getPidFileName(){
-        return PID_FILE;
+		try{
+			Files.deleteIfExists(Paths.get("", Settings.getCurrentLogLinkPath()));
+		}catch(Exception e){
+			// ignore
+		}
     }
 
     private static class LocalControlConnection implements Runnable
@@ -1568,7 +2060,7 @@ public class Kernel
                         try
                         {
                             String line = controlInputStream.readLine();
-                            if (line == null || line.equalsIgnoreCase(EXIT_STRING))
+                            if (line == null || line.equalsIgnoreCase(EXIT_STRING) || line.equalsIgnoreCase("quit"))
                             {
                                 break;
                             }

@@ -25,6 +25,7 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
 import java.math.BigInteger;
+import java.util.AbstractMap.SimpleEntry;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -128,7 +129,7 @@ public class FileUtility{
 		for(String line : lines){
 			line = line.trim();
 			if(!line.isEmpty() && !line.startsWith("#")){
-				String tokens[] = line.split(keyValueSeparator);
+				String tokens[] = line.split(keyValueSeparator, 2);
 				if(tokens.length == 2){
 					String from = tokens[0].trim();
 					String to = tokens[1].trim();
@@ -505,23 +506,39 @@ public class FileUtility{
 		}
 	}
 	
+	public static Result<ArrayList<SimpleEntry<String, String>>> parseKeyValueEntriesInConfigFile(
+			final String filepath, final String separator, final boolean ignoreCommentedLines){
+		final Result<ArrayList<String>> result = readLinesInFile(filepath, ignoreCommentedLines);
+		if(result.error){
+			return Result.failed("Failed to read keys values entries file", result);
+		}else{
+			final ArrayList<SimpleEntry<String, String>> entriesList = new ArrayList<SimpleEntry<String, String>>();
+			for(final String line : result.result){
+				final String tokens[] = line.split(separator, 2);
+				if(tokens.length == 2){
+					entriesList.add(new SimpleEntry<String, String>(tokens[0].trim(), tokens[1].trim()));
+				}
+			}
+			return Result.successful(entriesList);
+		}
+	}
+	
 	/**
 	 * @param filepath path of the config file
 	 * @param separator the string to split the line on
 	 * @param ignoreCommentedLines whether to ignore lines starting with '#' or not
 	 * @return HashMap in result or error
 	 */
-	public static Result<HashMap<String, String>> parseKeysValuesInConfigFile(String filepath, String separator, boolean ignoreCommentedLines){
-		Result<ArrayList<String>> result = readLinesInFile(filepath, ignoreCommentedLines);
+	public static Result<HashMap<String, String>> parseKeysValuesInConfigFile(
+			final String filepath, final String separator, final boolean ignoreCommentedLines){
+		final Result<ArrayList<SimpleEntry<String, String>>> result = 
+				parseKeyValueEntriesInConfigFile(filepath, separator, ignoreCommentedLines);
 		if(result.error){
-			return Result.failed("Failed to parse keys values", result);
+			return Result.failed("Failed to get keys values entries", result);
 		}else{
-			HashMap<String, String> map = new HashMap<String, String>();
-			for(String line : result.result){
-				String tokens[] = line.split(separator, 2);
-				if(tokens.length == 2){
-					map.put(tokens[0].trim(), tokens[1].trim());
-				}
+			final HashMap<String, String> map = new HashMap<String, String>();
+			for(final SimpleEntry<String, String> entry : result.result){
+				map.put(entry.getKey(), entry.getValue());
 			}
 			return Result.successful(map);
 		}
@@ -539,4 +556,177 @@ public class FileUtility{
 		return parseKeysValuesInConfigFile(filepath, "=", true);
 	}
 	
+	/**
+	 * Tests whether the path is writable or not.
+	 * 
+	 * If the path exists then must be a file and must be writable
+	 * If the path doesn't exist then the parent path must be a directory and writable
+	 * 
+	 * Throws exception with the appropriate message in case the test failed
+	 * 
+	 * @param path the path to the file
+	 * @throws Exception
+	 */
+	public static void pathMustBeAWritableFile(final String path) throws Exception{
+		if(HelperFunctions.isNullOrEmpty(path)){
+			throw new Exception("NULL/Empty path");
+		}
+		final File outputFile = new File(path);
+		try{
+			if(outputFile.exists()){
+				if(outputFile.isDirectory()){
+					throw new Exception("The path is a directory but expected a file");
+				}else{
+					if(!outputFile.canWrite()){
+						throw new Exception("The path is not writable");
+					}
+				}
+			}else{
+				final File parentFile = outputFile.getParentFile();
+				if(parentFile == null){ // This means that the path in 'outputFile' was filesystem root path
+					throw new Exception("The path is the filesystem root but expected a file");
+				}else{
+					if(!parentFile.exists()){
+						throw new Exception("Path's parent directory does not exist");
+					}else{
+						if(!parentFile.isDirectory()){
+							throw new Exception("Path's parent directory is not a directory");
+						}else{
+							if(!parentFile.canWrite()){
+								throw new Exception("Path's parent directory is not writable");
+							}
+						}
+					}
+				}
+			}
+		}catch(Exception e){
+			throw new Exception("Writable/creatable file test failed for path", e);
+		}
+	}
+	
+	/**
+	 * Tests whether the path is a readable file or not.
+	 * 
+	 * Throws exception with the appropriate message in case the test failed
+	 * 
+	 * @param path the path to the file
+	 * @throws Exception
+	 */
+	public static void pathMustBeAReadableFile(final String path) throws Exception{
+		if(HelperFunctions.isNullOrEmpty(path)){
+			throw new Exception("NULL/Empty path");
+		}
+		final File file = new File(path);
+		try{
+			if(file.exists()){
+				if(file.isDirectory()){
+					throw new Exception("The path is a directory but expected a file");
+				}else{
+					if(!file.canRead()){
+						throw new Exception("The path is not readable");
+					}
+				}
+			}else{
+				throw new Exception("File does not exist");
+			}
+		}catch(Exception e){
+			throw new Exception("Readable file test failed for path", e);
+		}
+	}
+	
+	/**
+	 * Tests whether the path is a readable directory or not.
+	 * 
+	 * Throws exception with the appropriate message in case the test failed
+	 * 
+	 * @param path the path to the directory
+	 * @throws Exception
+	 */
+	public static void pathMustBeAReadableDirectory(final String path) throws Exception{
+		if(HelperFunctions.isNullOrEmpty(path)){
+			throw new Exception("NULL/Empty path");
+		}
+		final File file = new File(path);
+		try{
+			if(file.exists()){
+				if(file.isDirectory()){
+					if(!file.canRead()){
+						throw new Exception("The path is not readable");
+					}
+				}else{
+					throw new Exception("The path is a file but expected a directory");
+				}
+			}else{
+				throw new Exception("Directory does not exist");
+			}
+		}catch(Exception e){
+			throw new Exception("Readable directory test failed for path", e);
+		}
+	}
+	
+	/**
+	 * Tests whether the path is a readable and writable directory or not.
+	 * 
+	 * Throws exception with the appropriate message in case the test failed
+	 * 
+	 * @param path the path to the directory
+	 * @throws Exception
+	 */
+	public static void pathMustBeAReadableWritableDirectory(final String path) throws Exception{
+		if(HelperFunctions.isNullOrEmpty(path)){
+			throw new Exception("NULL/Empty path");
+		}
+		final File file = new File(path);
+		try{
+			if(file.exists()){
+				if(file.isDirectory()){
+					if(!file.canRead()){
+						throw new Exception("The path is not readable");
+					}
+					if(!file.canWrite()){
+						throw new Exception("The path is not writable");
+					}
+				}else{
+					throw new Exception("The path is a file but expected a directory");
+				}
+			}else{
+				throw new Exception("Directory does not exist");
+			}
+		}catch(Exception e){
+			throw new Exception("Readable and writable directory test failed for path", e);
+		}
+	}
+	
+	/**
+	 * Tests whether the path is a readable and executable file or not.
+	 * 
+	 * Throws exception with the appropriate message in case the test failed
+	 * 
+	 * @param path the path to the file
+	 * @throws Exception
+	 */
+	public static void pathMustBeAReadableExecutableFile(final String path) throws Exception{
+		if(HelperFunctions.isNullOrEmpty(path)){
+			throw new Exception("NULL/Empty path");
+		}
+		final File file = new File(path);
+		try{
+			if(file.exists()){
+				if(file.isDirectory()){
+					throw new Exception("The path is a directory but expected a file");
+				}else{
+					if(!file.canRead()){
+						throw new Exception("The path is not readable");
+					}
+					if(!file.canExecute()){
+						throw new Exception("The path is not executable");
+					}
+				}
+			}else{
+				throw new Exception("File does not exist");
+			}
+		}catch(Exception e){
+			throw new Exception("Readable and executable file test failed for path", e);
+		}
+	}
 }

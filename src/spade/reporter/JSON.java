@@ -17,283 +17,436 @@
  along with this program. If not, see <http://www.gnu.org/licenses/>.
  --------------------------------------------------------------------------------
  */
- package spade.reporter;
+package spade.reporter;
 
 import java.io.BufferedReader;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.Reader;
 import java.util.HashMap;
-import java.util.Iterator;
+import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import org.json.JSONArray;
-import org.json.JSONException;
 import org.json.JSONObject;
+import org.json.JSONTokener;
 
 import spade.core.AbstractEdge;
 import spade.core.AbstractReporter;
 import spade.core.AbstractVertex;
-import spade.edge.prov.ActedOnBehalfOf;
-import spade.edge.prov.Used;
-import spade.edge.prov.WasAssociatedWith;
-import spade.edge.prov.WasAttributedTo;
-import spade.edge.prov.WasDerivedFrom;
-import spade.edge.prov.WasGeneratedBy;
-import spade.edge.prov.WasInformedBy;
-import spade.vertex.prov.Activity;
-import spade.vertex.prov.Agent;
-import spade.vertex.prov.Entity;
+import spade.core.Edge;
+import spade.core.Settings;
+import spade.core.Vertex;
+import spade.utility.FileUtility;
+import spade.utility.HelperFunctions;
+import spade.utility.Result;
 
 /**
  * JSON reporter for SPADE
  *
  * @author Hasanat Kazmi
  */
-public class JSON extends AbstractReporter {
+public class JSON extends AbstractReporter{
 
-    private boolean shutdown = false;
-    private boolean PRINT_DEBUG = true;
-    private HashMap<String, AbstractVertex> vertices;
+	private final Logger logger = Logger.getLogger(JSON.class.getName());
+	protected Logger getLogger(){
+		return logger;
+	}
+	
+	protected final void log(final Level level, final String msg){
+		log(level, msg, null);
+	}
+	
+	protected final void log(final Level level, final String msg, final Exception exception){
+		if(!logAll){
+			if(Level.INFO.equals(level) || Level.WARNING.equals(level)){
+				return;
+			}
+		}
+		if(exception == null){
+			getLogger().log(level, msg);
+		}else{
+			getLogger().log(level, msg, exception);
+		}
+	}
+	
+	//
+	
+	private static final String keyInput = "input", keyReportingIntervalSeconds = "reportingIntervalSeconds";
 
-    @Override
-    public boolean launch(final String arguments) {
-        /*
-        * argument is path to json file
-        */
-        vertices = new HashMap<String, AbstractVertex>();
+	private String inputFilePath = null;
+	private Long reportingIntervalMillis = null;
 
-        Runnable eventThread = new Runnable() {
-            public void run() {
+	private boolean reportingEnabled = false;
+	
+	private boolean isLaunched = false;
+	private boolean closeReaderOnShutdown = true;
+	private boolean logAll = true;
+	
+	///////////////////////////////////////////////////////
+	
+	private long lastReportedAtMillis = 0;
 
-                String file_path = arguments.trim();
-                String line;
-                StringBuffer jsonString = new StringBuffer();
-                BufferedReader br;
-                JSONArray jsonArray;
-                try {
-                  debugLog("Starting to read json file");
-                  br = new BufferedReader(new InputStreamReader(new FileInputStream(file_path)));
-                  while ((line = br.readLine()) != null) {
-                      jsonString.append(line);
-                  }
-                  br.close();
-                  debugLog("Sucessfully read json file");
+	private final Object shutdownLock = new Object();
+	private volatile boolean shutdown = false;
+	private volatile Reader reader = null; 
+	private volatile boolean mainRunning = false;
+	private volatile JSONTokener jsonTokener = null;
+	
+	private volatile boolean mainStopped = false;
 
-                } catch (IOException e) {
-                    JSON.log(Level.SEVERE, "Can't open and read json file.", e);
-                }
+	private long vertexCountInterval = 0;
+	private long vertexCountOverall = 0;
 
-                debugLog("Starting to objectify JSON content");
-                try {
-                  jsonArray = new JSONArray(jsonString.toString());
-                } catch (JSONException e){
-                  JSON.log(Level.SEVERE, "Failed to create JSON Array object", e);
-                  return;
-                }
-                debugLog("Sucessfully objectified JSON content");
+	private long edgeCountInterval = 0;
+	private long edgeCountOverall = 0;
 
-                processJsonArray(jsonArray);
-              }
-        };
-        new Thread(eventThread, "JsonReporter-Thread").start();
-        return true;
-    }
+	private final void vertexCountIncrement(){
+		vertexCountInterval++;
+		vertexCountOverall++;
+	}
 
-    @Override
-    public boolean shutdown() {
-        shutdown=true;
-        return true;
-    }
+	private final void edgeCountIncrement(){
+		edgeCountInterval++;
+		edgeCountOverall++;
+	}
+	
+	////////////////////////////////////////
+	
+	private final boolean isShutdown(){
+		synchronized(shutdownLock){
+			return shutdown;
+		}
+	}
 
-    private void processJsonArray(JSONArray jsonArray) {
-      debugLog("Size of JSON Array: " + jsonArray.length());
-      for (int i=0; i<jsonArray.length();i++) {
-        JSONObject jsonObject;
-        try {
-          jsonObject = jsonArray.getJSONObject(i);
-        } catch (JSONException e) {
-          JSON.log(Level.SEVERE, "Can not read object in JSON Array", e);
-          continue;
-        }
+	private final void setShutdown(final boolean shutdown){
+		synchronized(shutdownLock){
+			this.shutdown = shutdown;
+		}
+	}
 
-        String objectType;
-        try {
-          objectType = jsonObject.getString("type");
-        } catch (JSONException e) {
-          JSON.log(Level.SEVERE, "Missing type in object, can not access if its node or edge, ignoring object", null);
-          continue;
-        }
+	protected boolean printStats(boolean force){
+		long currentMillis = System.currentTimeMillis();
+		if(force || (reportingEnabled && currentMillis - lastReportedAtMillis >= reportingIntervalMillis)){
+			log(Level.INFO, "Vertices [Overall=" + vertexCountOverall + ", Interval=" + vertexCountInterval + "]");
+			log(Level.INFO, "Edges [Overall=" + edgeCountOverall + ", Interval=" + edgeCountInterval + "]");
+			log(Level.INFO, "Current Buffer Size=" + getBuffer().size());
 
-        if (objectType.equalsIgnoreCase("Activity") ||
-          objectType.equalsIgnoreCase("Agent") ||
-          objectType.equalsIgnoreCase("Entity")
-        ) {
-          processVertex(jsonObject);
-        } else if (objectType.equalsIgnoreCase("ActedOnBehalfOf") ||
-          objectType.equalsIgnoreCase("Used") ||
-          objectType.equalsIgnoreCase("WasAssociatedWith") ||
-          objectType.equalsIgnoreCase("WasAttributedTo") ||
-          objectType.equalsIgnoreCase("WasDerivedFrom") ||
-          objectType.equalsIgnoreCase("WasGeneratedBy") ||
-          objectType.equalsIgnoreCase("WasInformedBy")
-        ){
-          processEdge(jsonObject);
-        } else {
-          JSON.log(Level.SEVERE, "Unknown object type: '" + objectType + "', ignoring object", null);
-        }
-      }
-      debugLog("All provenance reported through JSON file has been retrived. Wait for buffers to clear....");
+			vertexCountInterval = edgeCountInterval = 0;
+			lastReportedAtMillis = System.currentTimeMillis();
+			return true;
+		}
+		return false;
+	}
+	
+	private final Runnable main = new Runnable(){
+		@Override
+		public void run(){
+			try{
+				mainRunning = true;
+	
+				lastReportedAtMillis = System.currentTimeMillis();
 
-      try {
-        while (this.getBuffer().size()!=0) {
-          Thread.sleep(1000);
-          debugLog("Size of buffer: " + this.getBuffer().size());
-        }
-      } catch (Exception e){}
+				Object object = null;
+				while(!isShutdown()){
+					printStats(false);
+	
+					try{
+						object = jsonTokener.nextValue();
+					}catch(Exception e){
+						log(Level.SEVERE, "Failed to read JSON object", e);
+						break;
+					}
+					if(object == null){
+						log(Level.SEVERE, "NULL JSON object");
+						break;
+					}
+					if(!object.getClass().equals(JSONObject.class)){
+						log(Level.SEVERE, "Unexpected JSON element '"+object+"'. Expected JSON object");
+						break;
+					}
+					try{
+						processJSONObject((JSONObject)object);
+					}catch(Exception e){
+						log(Level.SEVERE, "Failed to process JSON object: " + object, e);
+						break;
+					}
+					try{
+						char c = jsonTokener.skipTo('{');
+						if(c != '{'){ // end of input
+							break;
+						}
+					}catch(Exception e){
+						log(Level.SEVERE, "Failed to find the next JSON object", e);
+						break;
+					}
+				}
+			}finally{
+				mainRunning = false;
+				log(Level.INFO, "Exited main thread");
+				mainStopped = true;
+			}
+		}
+	};
+	
+	@Override
+	public synchronized boolean launch(String arguments){
+		final Map<String, String> map = new HashMap<String, String>();
+		try{
+			final String configFilePath = Settings.getDefaultConfigFilePath(this.getClass());
+			map.putAll(HelperFunctions.parseKeyValuePairsFrom(arguments, configFilePath, null));
+		}catch(Exception e){
+			log(Level.SEVERE, "Failed to parse arguments and/or storage config file", e);
+			return false;
+		}
 
-      debugLog("All buffers cleared. You may remove JSON reporter");
+		final String inputFilePathString = map.remove(keyInput);
+		final String reportingIntervalSecondsString = map.remove(keyReportingIntervalSeconds);
+		
+		try{
+			final boolean blocking = false;
+			final boolean closeReaderOnShutdown = true;
+			final boolean logAll = true;
+			launch(inputFilePathString, reportingIntervalSecondsString, blocking, closeReaderOnShutdown, logAll);
+			log(Level.INFO, "Arguments ["+keyInput+"="+inputFilePathString+", "+keyReportingIntervalSeconds+"="+reportingIntervalSecondsString+"]");
 
-    }
+			if(!map.isEmpty()){
+				log(Level.INFO, "Unused key-value pairs in the arguments and/or config file: " + map);
+			}
 
-    private void processVertex(JSONObject vertexObject) {
-      // Activity, Agent, Entity
-      String id = null;
-      
-      try {
-    	Object idValue = vertexObject.get("id");
-    	if(idValue == null){
-    		throw new JSONException("");
-    	}
-        id = String.valueOf(idValue);
-      } catch (JSONException e) {
-        JSON.log(Level.SEVERE, "Missing id in vertex, ignoring vertex : " + vertexObject.toString() , null);
-        return;
-      }
+			return true;
+		}catch(Exception e){
+			log(Level.SEVERE, "Failed to launch reporter", e);
+			return false;
+		}
+	}
+	
+	public final synchronized void launch(final String inputFilePathString, final String reportingIntervalSecondsString,
+			final boolean blocking, final boolean closeReaderOnShutdown, final boolean logAll) throws Exception{
+		final Result<Long> reportingIntervalSecondsResult = 
+				HelperFunctions.parseLong(reportingIntervalSecondsString, 10, Integer.MIN_VALUE, Integer.MAX_VALUE);
+		if(reportingIntervalSecondsResult.error){
+			throw new Exception("Invalid number of seconds to report stats at: '"+reportingIntervalSecondsString+"'. " 
+					+ reportingIntervalSecondsResult.errorMessage);
+		}
 
-      String vertexType;
-      try {
-        vertexType = vertexObject.getString("type");
-      } catch (JSONException e) {
-        // this is already been checked
-        return;
-      }
+		try{
+			FileUtility.pathMustBeAReadableFile(inputFilePathString);
+		}catch(Exception e){
+			throw new Exception("Invalid input file path to read from: '"+inputFilePathString+"'", e);
+		}
 
-      AbstractVertex vertex = null;
-      if (vertexType.equalsIgnoreCase("Activity")) {
-        vertex = new Activity();
-      } else if (vertexType.equalsIgnoreCase("Agent")) {
-        vertex = new Agent();
-      } else if (vertexType.equalsIgnoreCase("Entity")) {
-        vertex = new Entity();
-      }
+		launchUnsafe(inputFilePathString, reportingIntervalSecondsResult.result.intValue(), blocking, closeReaderOnShutdown, logAll);
+	}
+	
+	public final synchronized void launchUnsafe(final String validateInputFilePath, final int reportingIntervalSeconds,
+			final boolean blocking, final boolean closeReaderOnShutdown, final boolean logAll) throws Exception{
+		if(isLaunched){
+			throw new Exception("Reporter already launched");
+		}
 
-      JSONObject annotationsObject;
-      try {
-        annotationsObject = vertexObject.getJSONObject("annotations");
-        if (annotationsObject.length()!=0) {
-          for(Iterator iterator = annotationsObject.keys(); iterator.hasNext();) {
-            String key = (String) iterator.next();
-            String value = annotationsObject.getString(key);
-            vertex.addAnnotation(key, value);
-          }
-        }
-      } catch (JSONException e) {
-        // no annotations
-      }
+		BufferedReader reader = null;
+		try{
+			this.inputFilePath = validateInputFilePath;
+			this.reportingIntervalMillis = reportingIntervalSeconds * 1000L;
+			if(this.reportingIntervalMillis > 0){
+				this.reportingEnabled = true;
+			}
+			
+			reader = new BufferedReader(new FileReader(new File(this.inputFilePath)));
+		}catch(Exception e){
+			throw new Exception("Failed to create input file reader for file: '" + validateInputFilePath + "'", e);
+		}
+		
+		try{
+			launchUnsafe(reader, blocking, closeReaderOnShutdown, logAll);
+		}catch(Exception e){
+			if(reader != null){
+				try{
+					reader.close();
+				}catch(Exception closeException){
+					// ignore
+				}
+			}
+			throw e;
+		}
+	}
+	
+	public final synchronized void launchUnsafe(final Reader reader, final boolean blocking, 
+			final boolean closeReaderOnShutdown, final boolean logAll) throws Exception{
+		if(isLaunched){
+			throw new Exception("Reporter already launched");
+		}
+		
+		this.reader = reader;
+		this.closeReaderOnShutdown = closeReaderOnShutdown;
+		this.logAll = logAll;
+		
+		try{
+			this.jsonTokener = new JSONTokener(this.reader);
+		}catch(Exception e){
+			throw new Exception("Failed to create JSON tokener", e);
+		}
+		
+		try{
+			char c = jsonTokener.skipTo('{');
+			if(c != '{'){
+				throw new Exception("No JSON object");
+			}
+		}catch(Exception e){
+			throw new Exception("Failed to find the first JSON object", e);
+		}
+		
+		try{
+			final Thread thread = new Thread(main, this.getClass().getSimpleName() + "-reporter-thread");
+			thread.start();
+			
+			this.isLaunched = true;
+			
+		}catch(Exception e){
+			shutdown();
+			throw new Exception("Failed to start main thread", e);
+		}
+		
+		if(blocking){
+			// Wait for the thread to stop on its own
+			while(!mainStopped){
+				HelperFunctions.sleepSafe(100);
+			}
+		}
+	}
+	
+	@Override
+	public final boolean shutdown(){
+		if(!isShutdown()){
+			setShutdown(true);
 
-      vertices.put(id, vertex);
-      putVertex(vertex);
-    }
+			log(Level.INFO, "Waiting for main thread to exit... ");
+			while(this.mainRunning){
+				HelperFunctions.sleepSafe(100);
+			}
 
-    private void processEdge(JSONObject edgeObject) {
-      String from;
-      try {
-        Object fromValue = edgeObject.get("from");
-        if(fromValue == null){
-        	throw new JSONException("");
-        }
-        from = String.valueOf(fromValue);
-      } catch (JSONException e) {
-        JSON.log(Level.SEVERE, "Missing 'from' in edge, ignoring edge : " + edgeObject.toString() , null);
-        return;
-      }
+			if(this.reader != null){
+				try{
+					if(this.closeReaderOnShutdown){
+						this.reader.close();
+					}
+				}catch(Exception e){
+					log(Level.WARNING, "Failed to close file reader", e);
+				}
+				this.reader = null;
+			}
 
-      String to;
-      try {
-        Object toValue = edgeObject.get("to");
-        if(toValue == null){
-        	throw new JSONException("");
-        }
-        to = String.valueOf(toValue);
-      } catch (JSONException e) {
-        JSON.log(Level.SEVERE, "Missing 'to' in edge, ignoring edge : " + edgeObject.toString() , null);
-        return;
-      }
+			printStats(true);
+		}
+		return true;
+	}
 
-      AbstractVertex fromVertex = vertices.get(from);
-      AbstractVertex toVertex = vertices.get(to);
+	private final void processJSONObject(final JSONObject jsonObject){
+		final String typeString = jsonObject.optString(AbstractVertex.typeKey, null);
+		if(AbstractVertex.isVertexType(typeString)){
+			processVertex(jsonObject);
+		}else if(AbstractEdge.isEdgeType(typeString)){
+			processEdge(jsonObject);
+		}else{
+			log(Level.WARNING, "Unhandled 'type' in JSON object: " + jsonObject);
+			return;
+		}
+	}
 
-      if (fromVertex == null || toVertex == null) {
-        JSON.log(Level.SEVERE, "Starting and/or ending vertex of edge hasn't been seen before, ignoring edge : " + edgeObject.toString() , null);
-        return;
-      }
+	private final void processVertex(final JSONObject vertexObject){
+		final String idString = vertexObject.optString(AbstractVertex.idKey, null);
+		
+		if(HelperFunctions.isNullOrEmpty(idString)){
+			log(Level.WARNING, "NULL/Empty vertex 'id' in JSON object: " + vertexObject);
+			return;
+		}
+		
+		final String typeString = vertexObject.optString(AbstractVertex.typeKey, null);
+		
+		if(HelperFunctions.isNullOrEmpty(typeString)){
+			log(Level.WARNING, "NULL/Empty vertex 'type' in JSON object: " + vertexObject);
+			return;
+		}
+		
+		final Map<String, String> annotationsMap = new HashMap<String, String>();
+		
+		try{
+			final JSONObject annotationsObject = vertexObject.optJSONObject(AbstractVertex.annotationsKey);
+		
+			if(annotationsObject == null){
+				throw new Exception("NULL 'annotations'");
+			}
+			
+			annotationsMap.putAll(HelperFunctions.convertJSONObjectToMap(annotationsObject));
+		}catch(Exception e){
+			log(Level.WARNING, "Failed to get/parse vertex 'annotations' map in JSON object: " + vertexObject, e);
+			return;
+		}
+		
+		annotationsMap.put(AbstractVertex.typeKey, typeString);
+		
+		final Vertex vertex = new Vertex(idString);
+		vertex.addAnnotations(annotationsMap);
 
-      String edgeType;
-      try {
-        edgeType = edgeObject.getString("type");
-      } catch (JSONException e) {
-        // this is already been checked
-        return;
-      }
+		vertexCountIncrement();
+		putVertexToBuffer(vertex);
+	}
 
-      AbstractEdge edge = null;
-      if (edgeType.equalsIgnoreCase("ActedOnBehalfOf")) {
-        edge = new ActedOnBehalfOf((Agent) fromVertex, (Agent) toVertex);
-      } else if (edgeType.equalsIgnoreCase("WasAttributedTo")) {
-        edge = new WasAttributedTo((Entity) fromVertex, (Agent) toVertex);
-      } else if (edgeType.equalsIgnoreCase("WasDerivedFrom")) {
-        edge = new WasDerivedFrom((Entity) fromVertex, (Entity) toVertex);
-      } else if (edgeType.equalsIgnoreCase("WasGeneratedBy")) {
-        edge = new WasGeneratedBy((Entity) fromVertex, (Activity) toVertex);
-      } else if (edgeType.equalsIgnoreCase("WasInformedBy")) {
-        edge = new WasInformedBy((Activity) fromVertex, (Activity) toVertex);
-      } else if (edgeType.equalsIgnoreCase("Used")) {
-        edge = new Used((Activity) fromVertex, (Entity) toVertex);
-      } else if (edgeType.equalsIgnoreCase("WasAssociatedWith")) {
-        edge = new WasAssociatedWith((Activity) fromVertex, (Agent) toVertex);
-      }
+	private final void processEdge(final JSONObject edgeObject){
+		final String fromIdString = edgeObject.optString(AbstractEdge.fromIdKey, null);
+		
+		if(HelperFunctions.isNullOrEmpty(fromIdString)){
+			log(Level.WARNING, "NULL/Empty edge 'from' id in JSON object: " + edgeObject);
+			return;
+		}
+		
+		final String toIdString = edgeObject.optString(AbstractEdge.toIdKey, null);
+		
+		if(HelperFunctions.isNullOrEmpty(toIdString)){
+			log(Level.WARNING, "NULL/Empty edge 'to' id in JSON object: " + edgeObject);
+			return;
+		}
+		
+		final String typeString = edgeObject.optString(AbstractEdge.typeKey, null);
+		
+		if(HelperFunctions.isNullOrEmpty(typeString)){
+			log(Level.WARNING, "NULL/Empty edge 'type' in JSON object: " + edgeObject);
+			return;
+		}
+		
+		final Map<String, String> annotationsMap = new HashMap<String, String>();
+		
+		try{
+			final JSONObject annotationsObject = edgeObject.optJSONObject(AbstractEdge.annotationsKey);
+		
+			if(annotationsObject == null){
+				throw new Exception("NULL 'annotations'");
+			}
+			
+			annotationsMap.putAll(HelperFunctions.convertJSONObjectToMap(annotationsObject));
+		}catch(Exception e){
+			log(Level.WARNING, "Failed to get/parse edge 'annotations' map in JSON object: " + edgeObject, e);
+			return;
+		}
+		
+		annotationsMap.put(AbstractEdge.typeKey, typeString);
 
-      JSONObject annotationsObject;
-      try {
-        annotationsObject = edgeObject.getJSONObject("annotations");
-        if (annotationsObject.length()!=0) {
-          for(Iterator iterator = annotationsObject.keys(); iterator.hasNext();) {
-            String key = (String) iterator.next();
-            String value = annotationsObject.getString(key);
-            edge.addAnnotation(key, value);
-          }
-        }
+		final AbstractVertex childVertex = new Vertex(fromIdString);
+		final AbstractVertex parentVertex = new Vertex(toIdString);
 
-      } catch (JSONException e) {
-        // no annotations
-      }
+		final AbstractEdge edge = new Edge(childVertex, parentVertex);
+		edge.addAnnotations(annotationsMap);
 
-      putEdge(edge);
-    }
-
-    public void debugLog(String msg) {
-      if (PRINT_DEBUG == true) {
-        JSON.log(Level.INFO, msg, null);
-      }
-    }
-
-    public static void log(Level level, String msg, Throwable thrown) {
-        if (level == level.FINE) {
-        } else {
-            Logger.getLogger(JSON.class.getName()).log(level, msg, thrown);
-        }
-    }
-    
+		edgeCountIncrement();
+		putEdgeToBuffer(edge);
+	}
+	
+	protected void putVertexToBuffer(final AbstractVertex vertex){
+		putVertex(vertex);
+	}
+	
+	protected void putEdgeToBuffer(final AbstractEdge edge){
+		putEdge(edge);
+	}
 }

@@ -17,12 +17,6 @@
 package spade.storage;
 
 
-import spade.core.AbstractEdge;
-import spade.core.AbstractVertex;
-import spade.core.Cache;
-import spade.utility.CommonFunctions;
-
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.sql.DriverManager;
@@ -34,9 +28,11 @@ import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import static spade.core.Kernel.CONFIG_PATH;
-import static spade.core.Kernel.DB_ROOT;
-import static spade.core.Kernel.FILE_SEPARATOR;
+import spade.core.AbstractEdge;
+import spade.core.AbstractVertex;
+import spade.core.Cache;
+import spade.core.Settings;
+import spade.utility.HelperFunctions;
 
 public class H2 extends SQL
 {
@@ -44,7 +40,7 @@ public class H2 extends SQL
     {
         DUPLICATE_COLUMN_ERROR_CODE = "42121";
         logger = Logger.getLogger(H2.class.getName());
-        String configFile = CONFIG_PATH + FILE_SEPARATOR + "spade.storage.H2.config";
+        final String configFile = Settings.getDefaultConfigFilePath(this.getClass());
         try
         {
             databaseConfigs.load(new FileInputStream(configFile));
@@ -77,7 +73,7 @@ public class H2 extends SQL
     {
         try
         {
-            Map<String, String> argsMap = CommonFunctions.parseKeyValPairs(arguments);
+            Map<String, String> argsMap = HelperFunctions.parseKeyValPairs(arguments);
             // These arguments could be provided: database databaseUsername databasePassword
             String database = (argsMap.get("database") != null) ? argsMap.get("database") :
                     databaseConfigs.getProperty("database");
@@ -245,10 +241,10 @@ public class H2 extends SQL
      * not successful if the edge is already present in the storage.
      */
     @Override
-    public boolean putEdge(AbstractEdge incomingEdge)
+    public boolean storeEdge(AbstractEdge incomingEdge)
     {
         String edgeHash = incomingEdge.bigHashCode();
-        if(Cache.isPresent(edgeHash))
+        if(Cache.isVertexPresent(edgeHash))
             return true;
 
         String childVertexHash = incomingEdge.getChildVertex().bigHashCode();
@@ -263,21 +259,21 @@ public class H2 extends SQL
         insertStringBuilder.append(PRIMARY_KEY);
         insertStringBuilder.append("\"");
         insertStringBuilder.append(", ");
-        if(!incomingEdge.getAnnotations().containsKey(CHILD_VERTEX_KEY))
+        if(!incomingEdge.getCopyOfAnnotations().containsKey(CHILD_VERTEX_KEY))
         {
             insertStringBuilder.append("\"");
             insertStringBuilder.append(CHILD_VERTEX_KEY);
             insertStringBuilder.append("\"");
             insertStringBuilder.append(", ");
         }
-        if(!incomingEdge.getAnnotations().containsKey(PARENT_VERTEX_KEY))
+        if(!incomingEdge.getCopyOfAnnotations().containsKey(PARENT_VERTEX_KEY))
         {
             insertStringBuilder.append("\"");
             insertStringBuilder.append(PARENT_VERTEX_KEY);
             insertStringBuilder.append("\"");
             insertStringBuilder.append(", ");
         }
-        for (String annotationKey : incomingEdge.getAnnotations().keySet())
+        for (String annotationKey : incomingEdge.getCopyOfAnnotations().keySet())
         {
             // Sanitize column name to remove special characters
             String newAnnotationKey;
@@ -304,13 +300,13 @@ public class H2 extends SQL
         // Add the hash code, and source and destination vertex Ids
         insertStringBuilder.append(edgeHash);
         insertStringBuilder.append("', ");
-        if(!incomingEdge.getAnnotations().containsKey(CHILD_VERTEX_KEY))
+        if(!incomingEdge.getCopyOfAnnotations().containsKey(CHILD_VERTEX_KEY))
         {
             insertStringBuilder.append("'");
             insertStringBuilder.append(childVertexHash);
             insertStringBuilder.append("', ");
         }
-        if(!incomingEdge.getAnnotations().containsKey(PARENT_VERTEX_KEY))
+        if(!incomingEdge.getCopyOfAnnotations().containsKey(PARENT_VERTEX_KEY))
         {
             insertStringBuilder.append("'");
             insertStringBuilder.append(parentVertexHash);
@@ -318,7 +314,7 @@ public class H2 extends SQL
         }
 
         // Add the annotation values
-        for (String annotationKey : incomingEdge.getAnnotations().keySet())
+        for (String annotationKey : incomingEdge.getCopyOfAnnotations().keySet())
         {
             String value = (ENABLE_SANITIZATION) ? incomingEdge.getAnnotation(annotationKey).replace("'", "\"") : incomingEdge.getAnnotation(annotationKey);
 
@@ -355,10 +351,10 @@ public class H2 extends SQL
      * not successful if the vertex is already present in the storage.
      */
     @Override
-    public boolean putVertex(AbstractVertex incomingVertex)
+    public boolean storeVertex(AbstractVertex incomingVertex)
     {
         String vertexHash = incomingVertex.bigHashCode();
-        if(Cache.isPresent(vertexHash))
+        if(Cache.isVertexPresent(vertexHash))
             return true;
 
         // Use StringBuilder to build the H2 insert statement
@@ -370,7 +366,7 @@ public class H2 extends SQL
         insertStringBuilder.append(PRIMARY_KEY);
         insertStringBuilder.append("\"");
         insertStringBuilder.append(", ");
-        for (String annotationKey : incomingVertex.getAnnotations().keySet())
+        for (String annotationKey : incomingVertex.getCopyOfAnnotations().keySet())
         {
             // Sanitize column name to remove special characters
             String newAnnotationKey;
@@ -401,7 +397,7 @@ public class H2 extends SQL
         insertStringBuilder.append("', ");
 
         // Add the annotation values
-        for (String annotationKey : incomingVertex.getAnnotations().keySet())
+        for (String annotationKey : incomingVertex.getCopyOfAnnotations().keySet())
         {
             String value = (ENABLE_SANITIZATION) ? incomingVertex.getAnnotation(annotationKey).replace("'", "\"") :
                     incomingVertex.getAnnotation(annotationKey);

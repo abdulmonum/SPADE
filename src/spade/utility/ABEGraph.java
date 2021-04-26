@@ -1,12 +1,22 @@
+/*
+ --------------------------------------------------------------------------------
+ SPADE - Support for Provenance Auditing in Distributed Environments.
+ Copyright (C) 2020 SRI International
+ This program is free software: you can redistribute it and/or
+ modify it under the terms of the GNU General Public License as
+ published by the Free Software Foundation, either version 3 of the
+ License, or (at your option) any later version.
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ General Public License for more details.
+ You should have received a copy of the GNU General Public License
+ along with this program. If not, see <http://www.gnu.org/licenses/>.
+ --------------------------------------------------------------------------------
+ */
 package spade.utility;
 
-import com.mysql.jdbc.StringUtils;
-import spade.core.AbstractEdge;
-import spade.core.AbstractVertex;
-import spade.core.Graph;
-import spade.reporter.audit.OPMConstants;
-
-import javax.crypto.Cipher;
+import java.io.Serializable;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.HashMap;
@@ -14,12 +24,21 @@ import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import static spade.core.Kernel.FILE_SEPARATOR;
+import javax.crypto.Cipher;
+
+import spade.core.AbstractEdge;
+import spade.core.AbstractVertex;
+import spade.core.Graph;
+import spade.reporter.audit.OPMConstants;
+
 import static spade.transformer.ABE.encryptAnnotation;
 import static spade.transformer.ABE.decryptAnnotation;
 
 public class ABEGraph extends Graph
 {
+	private static final String FILE_SEPARATOR = "/";
+	
+	private static final long serialVersionUID = -6200790370474776849L;
 	private String lowKey;
 	private String mediumKey;
 	private String highKey;
@@ -30,8 +49,9 @@ public class ABEGraph extends Graph
 
 	private static final Logger logger = Logger.getLogger(ABEGraph.class.getName());
 
-	public abstract static class AnnotationValue
+	public abstract static class AnnotationValue implements Serializable
 	{
+		private static final long serialVersionUID = 1867029360876612990L;
 		protected String annotationValue;
 		protected Map<String, AnnotationValue> annotationParts;
 		public abstract String getAnnotationValue();
@@ -44,6 +64,8 @@ public class ABEGraph extends Graph
 
 	public static class PlainString extends AnnotationValue
 	{
+		private static final long serialVersionUID = 7127005860948785062L;
+
 		public PlainString(String value)
 		{
 			annotationValue = value;
@@ -86,6 +108,8 @@ public class ABEGraph extends Graph
 
 	public static class EncryptedString extends AnnotationValue
 	{
+		private static final long serialVersionUID = -259420789912721547L;
+
 		public EncryptedString(String value)
 		{
 			annotationValue = value;
@@ -128,6 +152,8 @@ public class ABEGraph extends Graph
 
 	public static class EncryptedTime extends AnnotationValue
 	{
+		private static final long serialVersionUID = -7710837313207640652L;
+
 		public EncryptedTime(String value)
 		{
 			annotationValue = value;
@@ -290,6 +316,8 @@ public class ABEGraph extends Graph
 
 	public static class EncryptedIPAddress extends AnnotationValue
 	{
+		private static final long serialVersionUID = 361669640678093013L;
+
 		public EncryptedIPAddress(String value)
 		{
 			annotationValue = value;
@@ -474,6 +502,8 @@ public class ABEGraph extends Graph
 
 	public static class EncryptedPath extends AnnotationValue
 	{
+		private static final long serialVersionUID = -1094392285254033923L;
+
 		public EncryptedPath(String value)
 		{
 			annotationValue = value;
@@ -569,6 +599,7 @@ public class ABEGraph extends Graph
 
 	public static class EncryptedVertex extends AbstractVertex
 	{
+		private static final long serialVersionUID = 7566633132972952082L;
 		private final Map<String, AnnotationValue> encryptedAnnotations = new HashMap<>();
 
 		public Map<String, AnnotationValue> getEncryptedAnnotations()
@@ -621,7 +652,7 @@ public class ABEGraph extends Graph
 			{
 				String key = currentEntry.getKey();
 				String value = currentEntry.getValue();
-				if(!StringUtils.isNullOrEmpty(key))
+				if(!HelperFunctions.isNullOrEmpty(key))
 				{
 					if(value == null)
 					{
@@ -649,6 +680,7 @@ public class ABEGraph extends Graph
 
 	public static class EncryptedEdge extends AbstractEdge
 	{
+		private static final long serialVersionUID = -1241826049035554633L;
 		private final Map<String, AnnotationValue> encryptedAnnotations = new HashMap<>();
 
 		public EncryptedEdge(AbstractVertex childVertex, AbstractVertex parentVertex)
@@ -707,7 +739,7 @@ public class ABEGraph extends Graph
 			{
 				String key = currentEntry.getKey();
 				String value = currentEntry.getValue();
-				if(!StringUtils.isNullOrEmpty(key))
+				if(!HelperFunctions.isNullOrEmpty(key))
 				{
 					if(value == null)
 					{
@@ -812,15 +844,13 @@ public class ABEGraph extends Graph
 	@Override
 	public boolean putVertex(AbstractVertex vertex)
 	{
-		vertexSet().add(vertex);
-		return true;
+		return super.putVertex(vertex);
 	}
 
 	@Override
 	public boolean putEdge(AbstractEdge edge)
 	{
-		edgeSet().add(edge);
-		return true;
+		return super.putEdge(edge);
 	}
 
 	public static AbstractVertex copyVertex(AbstractVertex vertex, boolean encryption)
@@ -828,13 +858,12 @@ public class ABEGraph extends Graph
 		EncryptedVertex newVertex = new EncryptedVertex();
 		if(encryption)
 		{
-			newVertex.addAnnotations(vertex.getAnnotations());
+			newVertex.addAnnotations(vertex.getCopyOfAnnotations());
 		}
 		else
 		{
 			newVertex.addEncryptedAnnotations(((EncryptedVertex)vertex).getEncryptedAnnotations());
 		}
-		newVertex.setDepth(vertex.getDepth());
 		return newVertex;
 	}
 
@@ -843,7 +872,7 @@ public class ABEGraph extends Graph
 		EncryptedEdge newEdge = new EncryptedEdge(null, null);
 		if(encryption)
 		{
-			newEdge.addAnnotations(edge.getAnnotations());
+			newEdge.addAnnotations(edge.getCopyOfAnnotations());
 		}
 		else
 		{

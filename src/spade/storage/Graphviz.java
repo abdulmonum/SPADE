@@ -19,319 +19,360 @@
  */
 package spade.storage;
 
-import java.io.FileInputStream;
+import java.io.BufferedWriter;
+import java.io.File;
 import java.io.FileWriter;
-import java.io.IOException;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import org.apache.commons.codec.binary.Hex;
-
 import spade.core.AbstractEdge;
 import spade.core.AbstractStorage;
 import spade.core.AbstractVertex;
-import spade.reporter.audit.OPMConstants;
-import spade.utility.CommonFunctions;
-
-import static spade.core.Kernel.CONFIG_PATH;
-import static spade.core.Kernel.FILE_SEPARATOR;
+import spade.core.Edge;
+import spade.core.Graph;
+import spade.core.Settings;
+import spade.core.Vertex;
+import spade.utility.DotConfiguration;
+import spade.utility.DotConfiguration.ShapeColor;
+import spade.utility.FileUtility;
+import spade.utility.HelperFunctions;
+import spade.utility.Result;
 
 /**
  * A storage implementation that writes data to a DOT file.
  *
  * @author Dawood Tariq
  */
-public class Graphviz extends AbstractStorage
-{
+public final class Graphviz extends AbstractStorage{
 
-    private FileWriter outputFile;
-    private final int TRANSACTION_LIMIT = 1000;
-    private int transaction_count;
-    private String output;
+	private static final Logger logger = Logger.getLogger(Graphviz.class.getName());
+	
+	private static final String 
+		keyFlushAfterBytesCount = "flushAfterBytes",
+		keyOutput = "output";
+	
+	private String outputFilePath;
+	private int flushAfterBytes;
+	
+	private volatile boolean isInitialized = false;
 
-    public Graphviz()
-    {
-        String configFile = CONFIG_PATH + FILE_SEPARATOR + "spade.storage.Graphviz.config";
-        try
-        {
-            databaseConfigs.load(new FileInputStream(configFile));
-        }
-        catch(IOException ex)
-        {
-            String msg = "Loading Graphviz configurations from file unsuccessful! Unexpected behavior might follow";
-            logger.log(Level.SEVERE, msg, ex);
-        }
-    }
+	private volatile boolean shutdown = false;
+	private BufferedWriter outputFileWriter;
+	private DotConfiguration dotConfiguration;
+	private boolean writeHeader, writeFooter;
+	private String newLine;
+	private boolean closeWriterOnShutdown = true;
+	
+	@Override
+	public final synchronized boolean initialize(String arguments){
+		final Map<String, String> map = new HashMap<String, String>();
+		try{
+			final String configFilePath = Settings.getDefaultConfigFilePath(this.getClass());
+			map.putAll(HelperFunctions.parseKeyValuePairsFrom(arguments, configFilePath, null));
+		}catch(Exception e){
+			logger.log(Level.SEVERE, "Failed to parse arguments and/or storage config file", e);
+			return false;
+		}
+		
+		final String outputFilePathString = map.remove(keyOutput);
+		final String flushAfterBytesString = map.remove(keyFlushAfterBytesCount);
+		
+		try{
+			initialize(outputFilePathString, flushAfterBytesString);
+			logger.log(Level.INFO, "Arguments ["+keyOutput+"="+outputFilePath+", "+keyFlushAfterBytesCount+"="+flushAfterBytes+"]");
 
-    @Override
-    public boolean initialize(String arguments)
-    {
-        try
-        {
-            Map<String, String> argsMap = CommonFunctions.parseKeyValPairs(arguments);
-            output = (argsMap.get("output") != null) ? argsMap.get("output") :
-                    databaseConfigs.getProperty("output");
+			/*
+			if(!map.isEmpty()){
+				logger.log(Level.INFO, "Unused key-value pairs in the arguments and/or config file: " + map);
+			}
+			*/
 
-            outputFile = new FileWriter(output, false);
-            transaction_count = 0;
-            outputFile.write("digraph spade2dot {\n"
-                    + "graph [rankdir = \"RL\"];\n"
-                    + "node [fontname=\"Helvetica\" fontsize=\"8\" style=\"filled\" margin=\"0.0,0.0\"];\n"
-                    + "edge [fontname=\"Helvetica\" fontsize=\"8\"];\n");
-            return true;
-        }
-        catch(Exception exception)
-        {
-            Logger.getLogger(Graphviz.class.getName()).log(Level.SEVERE, null, exception);
-            return false;
-        }
-    }
+			return true;
+		}catch(Exception e){
+			logger.log(Level.SEVERE, "Failed to initialize storage", e);
+			return false;
+		}
+	}
+	
+	public final synchronized void initialize(final String outputFilePathString, final String flushAfterBytesString) throws Exception{
+		final Result<Long> flushAfterBytesCountResult = HelperFunctions.parseLong(flushAfterBytesString, 10, 0, Integer.MAX_VALUE);
+		if(flushAfterBytesCountResult.error){
+			throw new Exception("Invalid value for number to bytes to flush after: '"+flushAfterBytesString+"'. " + flushAfterBytesCountResult.errorMessage);
+		}
 
-    private void checkTransactions() {
-        transaction_count++;
-        if (transaction_count == TRANSACTION_LIMIT) {
-            try {
-                outputFile.flush();
-                outputFile.close();
-                outputFile = new FileWriter(output, true);
-                transaction_count = 0;
-            } catch (Exception exception) {
-                Logger.getLogger(Graphviz.class.getName()).log(Level.SEVERE, null, exception);
-            }
-        }
-    }
+		try{
+			FileUtility.pathMustBeAWritableFile(outputFilePathString);
+		}catch(Exception e){
+			throw new Exception("Invalid output file path to write to: '"+outputFilePathString+"'", e);
+		}
 
-    @Override
-    public boolean putVertex(AbstractVertex incomingVertex) {
-        try {
-            StringBuilder annotationString = new StringBuilder();
-            for (Map.Entry<String, String> currentEntry : incomingVertex.getAnnotations().entrySet()) {
-                String key = currentEntry.getKey();
-                String value = currentEntry.getValue();
-                if (key == null || value == null) {
-                    continue;
-                }
-                annotationString.append(key);
-                annotationString.append(":");
-                annotationString.append(value);
-                annotationString.append("\\n");
-            }
-            String vertexString = annotationString.substring(0, annotationString.length() - 2);
-            String shape = "box";
-            String color = "white";
-            String type = incomingVertex.getAnnotation("type");
-            if (type.equalsIgnoreCase("Agent")
-                    || type.equalsIgnoreCase("Principal")) {
-                shape = "octagon";
-                color = "rosybrown1";
-            } else if (type.equalsIgnoreCase("Process")
-                    || type.equalsIgnoreCase("Activity")
-                    || type.equalsIgnoreCase("Subject")) {
-                shape = "box";
-                color = "lightsteelblue1";
-            } else if (type.equalsIgnoreCase("Artifact")
-                    || type.equalsIgnoreCase("Entity")
-                    || type.equalsIgnoreCase("Object")) {
-                shape = "ellipse";
-                color = "khaki1";
-                try {
-                    String subtype = incomingVertex.getAnnotation(OPMConstants.ARTIFACT_SUBTYPE);
-                    String cdmType = incomingVertex.getAnnotation("cdm.type");
-                    if (OPMConstants.SUBTYPE_NETWORK_SOCKET.equalsIgnoreCase(subtype)
-                            || "NetFlowObject".equalsIgnoreCase(cdmType)) {
-                        shape = "diamond";
-                        color = "palegreen1";
-                    }
-                } catch (Exception exception) {
-                    // Ignore
-                }
-            }
+		initializeUnsafe(outputFilePathString, flushAfterBytesCountResult.result.intValue(), DotConfiguration.getDefaultConfigFilePath(),
+				true, true, System.lineSeparator(), true);
+	}
+	
+	public final synchronized void initializeUnsafe(final String validatedOutputFilePath, final int validatedFlushAfterBytesCount,
+			final String dotConfigurationFilePath, 
+			final boolean writeHeader, final boolean writeFooter, final String newLine,
+			final boolean closeWriterOnShutdown) throws Exception{
+		if(isInitialized){
+			throw new Exception("Storage already initialized");
+		}
 
-            String key = Hex.encodeHexString(incomingVertex.bigHashCodeBytes());
-            outputFile.write("\"" + key + "\" [label=\"" + vertexString.replace("\"", "'") + "\" shape=\"" + shape + "\" fillcolor=\"" + color + "\"];\n");
-            checkTransactions();
-            return true;
-        } catch (Exception exception) {
-            Logger.getLogger(Graphviz.class.getName()).log(Level.SEVERE, null, exception);
-            return false;
-        }
-    }
+		BufferedWriter writer = null;
+		try{
+			this.outputFilePath = validatedOutputFilePath;
+			this.flushAfterBytes = validatedFlushAfterBytesCount;
+			
+			if(this.flushAfterBytes <= 0){
+				writer = new BufferedWriter(new FileWriter(new File(this.outputFilePath)));
+			}else{
+				writer = new BufferedWriter(new FileWriter(new File(this.outputFilePath)), this.flushAfterBytes);
+			}
+		}catch(Exception e){
+			throw new Exception("Failed to create output file writer for file: '" + validatedOutputFilePath + "'", e);
+		}
+		
+		try{
+			initializeUnsafe(writer, dotConfigurationFilePath, writeHeader, writeFooter, newLine, closeWriterOnShutdown);
+		}catch(Exception e){
+			if(writer != null){
+				try{
+					writer.close();
+				}catch(Exception closeException){
+					// ignore
+				}
+			}
+			throw e;
+		}
+	}
+	
+	public final synchronized void initializeUnsafe(final BufferedWriter bufferedWriter,
+			final String dotConfigurationFilePath, 
+			final boolean writeHeader, final boolean writeFooter, final String newLine,
+			final boolean closeWriterOnShutdown) throws Exception{
+		if(isInitialized){
+			throw new Exception("Storage already initialized");
+		}
+		
+		if(newLine == null){
+			throw new Exception("New line separator cannot be null");
+		}
+		
+		final Result<DotConfiguration> dotConfigurationResult = DotConfiguration.loadFromFile(dotConfigurationFilePath);
+		if(dotConfigurationResult.error){
+			throw new Exception("Failed to initialize dot configuration: " + dotConfigurationResult.errorMessage, dotConfigurationResult.exception);
+		}
+		this.dotConfiguration = dotConfigurationResult.result;
+		
+		this.writeHeader = writeHeader;
+		this.writeFooter = writeFooter;
+		this.newLine = newLine;
+		this.outputFileWriter = bufferedWriter;
+		this.closeWriterOnShutdown = closeWriterOnShutdown;
+		
+		try{
+			if(this.writeHeader){
+				final String startOfFile = 
+						"digraph spade2dot {" + newLine
+						+ "graph [rankdir = \"RL\"];" + newLine
+						+ "node [fontname=\"Helvetica\" fontsize=\"8\" style=\"filled\" margin=\"0.0,0.0\"];" + newLine
+						+ "edge [fontname=\"Helvetica\" fontsize=\"8\"];" + newLine;
+				write(startOfFile, true);
+			}
+			
+			this.isInitialized = true;
+		}catch(Exception e){
+			closeFileWriter();
+			throw new Exception("Failed to write header", e);
+		}
+	}
 
-    @Override
-    public Object executeQuery(String query)
-    {
-        return null;
-    }
+	public final synchronized boolean isShutdown(){
+		return shutdown;
+	}
+	
+	@Override
+	public final synchronized boolean shutdown(){
+		if(isInitialized){
+			if(shutdown){
+				logger.log(Level.SEVERE, "Storage is already shutdown");
+			}else{
+				shutdown = true;
+				if(writeFooter){
+					write("}" + newLine, true);
+				}
+				if(this.outputFileWriter != null){
+					closeFileWriter();
+				}
+			}
+		}
+		return true;
+	}
 
-    @Override
-    public boolean putEdge(AbstractEdge incomingEdge) {
-        try {
-            StringBuilder annotationString = new StringBuilder();
-            for (Map.Entry<String, String> currentEntry : incomingEdge.getAnnotations().entrySet()) {
-                String key = currentEntry.getKey();
-                String value = currentEntry.getValue();
-                if (key == null || value == null) {
-                    continue;
-                }
-                annotationString.append(key);
-                annotationString.append(":");
-                annotationString.append(value);
-                annotationString.append("\\n");
-            }
-            String color = "black";
-            String type = incomingEdge.getAnnotation("type");
-            if (type.equalsIgnoreCase("Used")) {
-                color = "green";
-            } else if (type.equalsIgnoreCase("WasGeneratedBy")) {
-                color = "red";
-            } else if (type.equalsIgnoreCase("WasTriggeredBy")
-                    || type.equalsIgnoreCase("WasInformedBy")) {
-                color = "blue";
-            } else if (type.equalsIgnoreCase("WasControlledBy")
-                    || type.equalsIgnoreCase("WasAssociatedWith")) {
-                color = "purple";
-            } else if (type.equalsIgnoreCase("WasDerivedFrom")) {
-                color = "orange";
-            } else if(type.equalsIgnoreCase("SimpleEdge")){
-                String cdmTypeString = incomingEdge.getAnnotation("cdm.type");
-                if(cdmTypeString != null){//exception handling
-                    switch (cdmTypeString) {
-                        case "UnitDependency":
-                        case "EVENT_EXIT":
-                        case "EVENT_FORK":
-                        case "EVENT_CLONE":
-                        case "EVENT_EXECUTE":
-                        case "EVENT_CHANGE_PRINCIPAL":
-                        case "EVENT_UNIT":
-                        case "EVENT_MODIFY_PROCESS":
-                        case "EVENT_SIGNAL":
-                            color = "blue";
-                            break;
-                        case "EVENT_TEE":
-                        case "EVENT_SPLICE":
-                        case "EVENT_CLOSE":
-                        case "EVENT_OPEN":
-                        case "EVENT_CREATE_OBJECT":
-                        case "EVENT_MMAP":
-                        case "EVENT_RENAME":
-                        case "EVENT_LINK":
-                        case "EVENT_UPDATE":
-                            color = "violet";
-                            break;
-                        case "EVENT_VMSPLICE":
-                        case "EVENT_UNLINK":
-                        case "EVENT_WRITE":
-                        case "EVENT_SENDMSG":
-                        case "EVENT_MPROTECT":
-                        case "EVENT_CONNECT":
-                        case "EVENT_TRUNCATE":
-                        case "EVENT_MODIFY_FILE_ATTRIBUTES":
-                            color = "red";
-                            break;
-                        case "EVENT_INIT_MODULE":
-                        case "EVENT_FINIT_MODULE":
-                        case "EVENT_LOADLIBRARY":
-                        case "EVENT_READ":
-                        case "EVENT_RECVMSG":
-                        case "EVENT_ACCEPT":
-                            color = "green";
-                            break;
-                        default:
-                            color = "black";
-                            break;
-                    }
-                }else{
-                    color = "black";
-                }
-            }
+	private final synchronized void write(final String data, final boolean forceFlush){
+		if(data != null){
+			if(this.outputFileWriter == null){
+				logger.log(Level.SEVERE, "File writer is already closed. Data discarded: " + data);
+			}else{
+				try{
+					this.outputFileWriter.write(data);
+					if(forceFlush){
+						this.outputFileWriter.flush();
+					}
+				}catch(Exception writeException){
+					logger.log(Level.SEVERE, "Failed to write/flush data. Tail end of data discarded: " + data, writeException);
+					closeFileWriter();
+				}
+			}
+		}else{
+			logger.log(Level.WARNING, "Discarded <NULL> data to write");
+		}
+	}
+	
+	private final synchronized void closeFileWriter(){
+		if(this.outputFileWriter != null){
+			try{
+				this.outputFileWriter.flush(); // always flush
+				if(this.closeWriterOnShutdown){
+					this.outputFileWriter.close();
+				}
+			}catch(Exception e){
+				logger.log(Level.SEVERE, "Failed to close file writer. Some data might be lost.", e);
+			}finally{
+				this.outputFileWriter = null;
+			}
+		}else{
+			logger.log(Level.WARNING, "File writer is already closed.");
+		}
+	}
 
-            String style = "solid";
-            if (incomingEdge.getAnnotation("success") != null && incomingEdge.getAnnotation("success").equals("false")) {
-                style = "dashed";
-            }
+	private final String convertAnnotationsToDotLabel(final Map<String, String> annotations){
+		final StringBuilder annotationString = new StringBuilder();
+		for(final Map.Entry<String, String> currentEntry : annotations.entrySet()){
+			String key = currentEntry.getKey();
+			String value = currentEntry.getValue();
+			if(key == null || value == null){
+				logger.log(Level.WARNING, "NULL key and/or value. Entry ignored. Map: " + annotations);
+				continue;
+			}
+			annotationString.append(key);
+			annotationString.append(":");
+			annotationString.append(value);
+			annotationString.append("\\n");
+		}
+		final String result = escapeDoubleQuotes(annotationString.toString());
+		if(result.length() >= 2){ // for the trailing "\\n"
+			return result.substring(0, result.length() - 2);
+		}else{
+			return result;
+		}
+	}
+	
+	private final String escapeDoubleQuotes(final String str){
+		return str.replaceAll("\"", "\\\\\"");
+	}
+	
+	@Override
+	public final synchronized boolean storeVertex(final AbstractVertex vertex){
+		if(vertex == null){
+			logger.log(Level.WARNING, "NULL vertex to put. Vertex ignored.");
+		}else{
+			try{
+				final Map<String, String> annotationsCopy = vertex.getCopyOfAnnotations();
+	
+				final String vertexLabel = convertAnnotationsToDotLabel(annotationsCopy);
+				final ShapeColor shapeColor = dotConfiguration.getVertexShapeColor(vertex);
+	
+				final String key = escapeDoubleQuotes(vertex.getIdentifierForExport());
+				final String shape = escapeDoubleQuotes(shapeColor.shape);
+				final String color = escapeDoubleQuotes(shapeColor.color);
+				
+				final String vertexString = 
+						"\"" + key + "\" [label=\"" + vertexLabel + "\" shape=\"" 
+						+ shape + "\" fillcolor=\"" + color + "\"];" + newLine;
+				write(vertexString, false);
+			}catch(Exception e){
+				logger.log(Level.WARNING, "Unexpected error. Vertex discarded: " + vertex, e);
+			}
+		}
+		return true;
+	}
 
-            String edgeString = annotationString.toString();
-            if (edgeString.length() > 0) {
-                edgeString = "(" + edgeString.substring(0, edgeString.length() - 2) + ")";
-            }
+	@Override
+	public final synchronized boolean storeEdge(final AbstractEdge edge){
+		if(edge == null){
+			logger.log(Level.WARNING, "NULL edge to put. Edge ignored.");
+		}else if(edge.getChildVertex() == null){
+			logger.log(Level.WARNING, "NULL child vertex in edge to put. Edge ignored: " + edge);
+		}else if(edge.getParentVertex() == null){
+			logger.log(Level.WARNING, "NULL parent vertex in edge to put. Edge ignored: " + edge);
+		}else{
+			try{
+				final Map<String, String> annotationsCopy = edge.getCopyOfAnnotations();
 
-            String srckey = Hex.encodeHexString(incomingEdge.getChildVertex().bigHashCodeBytes());
-            String dstkey = Hex.encodeHexString(incomingEdge.getParentVertex().bigHashCodeBytes());
+				final String edgeLabel = convertAnnotationsToDotLabel(annotationsCopy);
+				final String style = escapeDoubleQuotes(dotConfiguration.getEdgeStyle(edge));
+				final String color = escapeDoubleQuotes(dotConfiguration.getEdgeColor(edge));
+				
+				final AbstractVertex childVertex = edge.getChildVertex();
+				final AbstractVertex parentVertex = edge.getParentVertex();
+				
+				final String childKey = escapeDoubleQuotes(childVertex.getIdentifierForExport());
+				final String parentKey = escapeDoubleQuotes(parentVertex.getIdentifierForExport());
+				
+				final String edgeString = 
+						"\"" + childKey + "\" -> \"" + parentKey + "\" [label=\"" + edgeLabel
+						+ "\" color=\"" + color + "\" style=\"" + style + "\"];" + newLine;
+				write(edgeString, false);
+			}catch(Exception e){
+				logger.log(Level.WARNING, "Unexpected error. Edge discarded: " + edge, e);
+			}
+		}
+		return true;
+	}
 
-            outputFile.write("\"" + srckey + "\" -> \"" + dstkey + "\" [label=\"" + edgeString.replace("\"", "'") + "\" color=\"" + color + "\" style=\"" + style + "\"];\n");
-            checkTransactions();
-            return true;
-        } catch (Exception exception) {
-            Logger.getLogger(Graphviz.class.getName()).log(Level.SEVERE, null, exception);
-            return false;
-        }
-    }
-
-    @Override
-    public boolean shutdown() {
-        try {
-            outputFile.write("}\n");
-            outputFile.close();
-            return true;
-        } catch (Exception exception) {
-            Logger.getLogger(Graphviz.class.getName()).log(Level.SEVERE, null, exception);
-            return false;
-        }
-    }
-
-    /**
-     * This function queries the underlying storage and retrieves the edge
-     * matching the given criteria.
-     *
-     * @param childVertexHash  hash of the source vertex.
-     * @param parentVertexHash hash of the destination vertex.
-     * @return returns edge object matching the given vertices OR NULL.
-     */
-    @Override
-    public spade.core.AbstractEdge getEdge(String childVertexHash, String parentVertexHash)
-    {
-        return null;
-    }
-
-    /**
-     * This function queries the underlying storage and retrieves the vertex
-     * matching the given criteria.
-     *
-     * @param vertexHash hash of the vertex to find.
-     * @return returns vertex object matching the given hash OR NULL.
-     */
-    @Override
-    public spade.core.AbstractVertex getVertex(String vertexHash)
-    {
-        return null;
-    }
-
-    /**
-     * This function finds the children of a given vertex.
-     * A child is defined as a vertex which is the source of a
-     * direct edge between itself and the given vertex.
-     *
-     * @param parentHash hash of the given vertex
-     * @return returns graph object containing children of the given vertex OR NULL.
-     */
-    @Override
-    public spade.core.Graph getChildren(String parentHash)
-    {
-        return null;
-    }
-
-    /**
-     * This function finds the parents of a given vertex.
-     * A parent is defined as a vertex which is the destination of a
-     * direct edge between itself and the given vertex.
-     *
-     * @param childVertexHash hash of the given vertex
-     * @return returns graph object containing parents of the given vertex OR NULL.
-     */
-    @Override
-    public spade.core.Graph getParents(String childVertexHash)
-    {
-        return null;
-    }
+	@Override
+	public final synchronized Object executeQuery(String query){
+		throw new RuntimeException("Graphviz storage does NOT support querying");
+	}
+	
+	public static void main(final String[] args) throws Exception{
+		final String dotPath = "/tmp/test.dot";
+		final String svgPath = "/tmp/test.svg";
+		
+		Graph g = new Graph();
+		AbstractVertex v0 = new Vertex("www");
+		v0.addAnnotation("a", "\"b");
+		v0.addAnnotation("type", "Artifact");
+		v0.addAnnotation("id", "0\"01");
+		g.putVertex(v0);
+		
+		AbstractVertex v1 = new Vertex();
+		v1.addAnnotation("type", "Artifact");
+		v1.addAnnotation("subtype", "network socket");
+//		v1.addAnnotation("id", "002");
+		g.putVertex(v1);
+		
+		AbstractEdge e0 = new Edge(v0, v1);
+		e0.addAnnotation("type", "SimpleEdge");
+		e0.addAnnotation("cdm.type", "EVENT_WRITE");
+		g.putEdge(e0);
+		
+		Graphviz s = new Graphviz();
+		if(s.initialize(keyOutput+"="+dotPath + " " + keyFlushAfterBytesCount + "=0")){
+	//		s.initializeUnsafe(dotPath, 100, DotConfiguration.getDefaultConfigFilePath(), false, false, System.lineSeparator());
+			for(AbstractVertex v : g.vertexSet()){
+				s.putVertex(v);
+			}
+			for(AbstractEdge e : g.edgeSet()){
+				s.putEdge(e);
+			}
+			s.shutdown();
+			
+			Runtime.getRuntime().exec(new String[]{"/bin/sh", "-c", "/usr/local/bin/dot -Tsvg " + dotPath + " > " + svgPath});
+			Runtime.getRuntime().exec(new String[]{"/bin/sh", "-c", "/usr/bin/open " + svgPath});
+		}
+	}
 }

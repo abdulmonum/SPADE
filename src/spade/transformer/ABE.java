@@ -1,23 +1,21 @@
+/*
+ --------------------------------------------------------------------------------
+ SPADE - Support for Provenance Auditing in Distributed Environments.
+ Copyright (C) 2020 SRI International
+ This program is free software: you can redistribute it and/or
+ modify it under the terms of the GNU General Public License as
+ published by the Free Software Foundation, either version 3 of the
+ License, or (at your option) any later version.
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ General Public License for more details.
+ You should have received a copy of the GNU General Public License
+ along with this program. If not, see <http://www.gnu.org/licenses/>.
+ --------------------------------------------------------------------------------
+ */
 package spade.transformer;
 
-import org.apache.commons.codec.binary.Hex;
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang3.StringUtils;
-import spade.client.QueryMetaData;
-import spade.core.AbstractEdge;
-import spade.core.AbstractTransformer;
-import spade.core.AbstractVertex;
-import spade.core.Graph;
-import spade.core.Settings;
-import spade.utility.ABEGraph;
-import spade.utility.ABEGraph.AnnotationValue;
-import spade.utility.ABEGraph.EncryptedVertex;
-import spade.utility.ABEGraph.EncryptedEdge;
-
-import javax.crypto.Cipher;
-import javax.crypto.KeyGenerator;
-import javax.crypto.SecretKey;
-import javax.crypto.spec.SecretKeySpec;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
@@ -26,17 +24,36 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import static spade.core.Kernel.FILE_SEPARATOR;
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
+
+import org.apache.commons.codec.binary.Hex;
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang.StringUtils;
+
+import spade.client.QueryMetaData;
+import spade.core.AbstractEdge;
+import spade.core.AbstractTransformer;
+import spade.core.AbstractVertex;
+import spade.core.Graph;
+import spade.core.Settings;
+import spade.utility.ABEGraph;
+import spade.utility.ABEGraph.AnnotationValue;
+import spade.utility.ABEGraph.EncryptedEdge;
+import spade.utility.ABEGraph.EncryptedVertex;
 
 public class ABE extends AbstractTransformer
 {
+	private static final String FILE_SEPARATOR = "/";
+	
     private KeyGenerator keyGenerator;
     private Ciphers cipher;
     private static final String LOW = "low";
@@ -180,6 +197,7 @@ public class ABE extends AbstractTransformer
             }
             else
             {
+            	keyDirectoryPath = Settings.getPathRelativeToSPADERootIfNotAbsolute(keyDirectoryPath);
                 File keyDirFile = new File(keyDirectoryPath);
                 try
                 {
@@ -485,17 +503,24 @@ public class ABE extends AbstractTransformer
         try
         {
             // write secret key to a file temporarily
-            String keyFileName = "key.txt";
-            String encryptedKeyFileName = "key.cpabe";
-            String encodedKey = Hex.encodeHexString(symmetricKey.getEncoded());
-            File keyFile = new File(KEYS_DIR.getAbsolutePath() + FILE_SEPARATOR + keyFileName);
+            final String keyFilePath = Settings.getPathRelativeToTemporaryDirectory("key.txt");
+            final String encryptedKeyFilePath = Settings.getPathRelativeToTemporaryDirectory("key.cpabe");
+
+            final String encodedKey = Hex.encodeHexString(symmetricKey.getEncoded());
+
+            final File keyFile = new File(keyFilePath);
             FileUtils.writeStringToFile(keyFile, encodedKey, StandardCharsets.UTF_8);
 
             // perform ABE encryption
-            String command = "oabe_enc -s CP -p spade -e (" + level + ") -i " + keyFileName +
-                    " -o " + encryptedKeyFileName;
-            Runtime runtime = Runtime.getRuntime();
-            Process process = runtime.exec(command, null, KEYS_DIR);
+            String command = "oabe_enc -s CP -p spade -e (" + level + ") -i " + keyFilePath +
+                    " -o " + encryptedKeyFilePath;
+            //logger.log(Level.INFO, "Command: " + Arrays.asList(command.split("\\s+")));
+            ProcessBuilder pb = new ProcessBuilder(command.split("\\s+"));
+            pb.environment().put("LD_LIBRARY_PATH", "/usr/local/lib/");
+            pb.directory(this.KEYS_DIR);
+            //Runtime runtime = Runtime.getRuntime();
+            //Process process = runtime.exec(command, null, KEYS_DIR);
+            Process process = pb.start();
             process.waitFor();
             keyFile.delete();
 
@@ -512,9 +537,17 @@ public class ABE extends AbstractTransformer
                 }
                 return null;
             }
+            
+            /*
+			BufferedReader stdOut = new BufferedReader(new InputStreamReader(process.getInputStream()));
+			String line;
+			while((line = stdOut.readLine()) != null){
+				logger.log(Level.INFO, "Enc out: " + line);
+			}
+			*/
 
             // read encrypted key from file
-            File encryptedKeyFile = new File(KEYS_DIR.getAbsolutePath() + FILE_SEPARATOR + encryptedKeyFileName);
+            File encryptedKeyFile = new File(encryptedKeyFilePath);
             String encryptedKey = FileUtils.readFileToString(encryptedKeyFile, StandardCharsets.UTF_8);
             encryptedKeyFile.delete();
 
@@ -682,18 +715,4 @@ public class ABE extends AbstractTransformer
             encryptVertex((EncryptedVertex) vertex);
         }
     }
-
-//    public static void main(String[] args)
-//    {
-////        Following is a test case for testing and verification
-//        Graph graph = Graph.importGraph("sample.dot");
-//        System.out.println("original graph:\n" + graph);
-//        ABE abe = new ABE();
-//        abe.initialize("");
-//        ABEGraph encryptedGraph = abe.transform(graph, null);
-//        System.out.println("encrypted graph:\n" + encryptedGraph);
-//
-//        ABEGraph decryptedGraph = abe.decryptGraph(encryptedGraph);
-//        System.out.println("decrypted graph:\n" + decryptedGraph);
-//    }
 }

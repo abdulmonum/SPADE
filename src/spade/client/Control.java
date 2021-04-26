@@ -52,8 +52,7 @@ public class Control {
     private static PrintStream errorStream;
     private volatile static PrintStream SPADEControlIn;
     private static BufferedReader SPADEControlOut;
-    private static final String SPADE_ROOT = Settings.getProperty("spade_root");
-    private static final String historyFile = SPADE_ROOT + "cfg/control.history";
+    private static final String historyFile = Settings.getControlHistoryFilePath();
     private static final String COMMAND_PROMPT = "-> ";
     private static final long THREAD_SLEEP_TIME = 10;
     // Members for creating secure sockets
@@ -63,13 +62,13 @@ public class Control {
     
     private static void setupKeyStores() throws Exception
     {
-        String serverPublicPath = SPADE_ROOT + "cfg/ssl/server.public";
-        String clientPrivatePath = SPADE_ROOT + "cfg/ssl/client.private";
+        String SERVER_PUBLIC_PATH = Settings.getServerPublicKeystorePath();
+        String CLIENT_PRIVATE_PATH = Settings.getClientPrivateKeystorePath();
 
         serverKeyStorePublic = KeyStore.getInstance("JKS");
-        serverKeyStorePublic.load(new FileInputStream(serverPublicPath), "public".toCharArray());
+        serverKeyStorePublic.load(new FileInputStream(SERVER_PUBLIC_PATH), Settings.getPasswordPublicKeystoreAsCharArray());
         clientKeyStorePrivate = KeyStore.getInstance("JKS");
-        clientKeyStorePrivate.load(new FileInputStream(clientPrivatePath), "private".toCharArray());
+        clientKeyStorePrivate.load(new FileInputStream(CLIENT_PRIVATE_PATH), Settings.getPasswordPrivateKeystoreAsCharArray());
     }
 
     private static void setupClientSSLContext() throws Exception
@@ -80,7 +79,7 @@ public class Control {
         TrustManagerFactory tmf = TrustManagerFactory.getInstance("SunX509");
         tmf.init(serverKeyStorePublic);
         KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
-        kmf.init(clientKeyStorePrivate, "private".toCharArray());
+        kmf.init(clientKeyStorePrivate, Settings.getPasswordPrivateKeystoreAsCharArray());
 
         SSLContext sslContext = SSLContext.getInstance("TLS");
         sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), secureRandom);
@@ -109,7 +108,7 @@ public class Control {
     private static boolean setupRemoteStreams(){
     	try{
             String host = "localhost";
-            int port = Integer.parseInt(Settings.getProperty("local_control_port"));
+            int port = Settings.getLocalControlPort();
             SSLSocket remoteSocket = (SSLSocket) sslSocketFactory.createSocket(host, port);
             OutputStream outStream = remoteSocket.getOutputStream();
             InputStream inStream = remoteSocket.getInputStream();
@@ -150,12 +149,18 @@ public class Control {
             configArguments.add(new SimpleCompletor(new String[]{"config"}));
             configArguments.add(new SimpleCompletor(new String[]{"load", "save"}));
             configArguments.add(new NullCompletor());
+            
+            List<Completor> setArguments = new LinkedList<>();
+            setArguments.add(new SimpleCompletor(new String[]{"set"}));
+            setArguments.add(new SimpleCompletor(new String[]{"storage"}));
+            setArguments.add(new NullCompletor());
 
             List<Completor> completors = new LinkedList<>();
             completors.add(new ArgumentCompletor(addArguments));
             completors.add(new ArgumentCompletor(removeArguments));
             completors.add(new ArgumentCompletor(listArguments));
             completors.add(new ArgumentCompletor(configArguments));
+            completors.add(new ArgumentCompletor(setArguments));
 
             commandReader.addCompletor(new MultiCompletor(completors));
 	        return true;
@@ -214,7 +219,7 @@ public class Control {
     			break;
     		}
     		
-    		if("exit".equals(command)){
+    		if("exit".equalsIgnoreCase(command) || "quit".equalsIgnoreCase(command)){
     			// On exit, the kernel doesn't send back any response
     			break;
     		}else{

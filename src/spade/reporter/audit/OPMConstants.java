@@ -28,6 +28,7 @@ import java.util.logging.Logger;
 
 import spade.core.AbstractEdge;
 import spade.core.AbstractVertex;
+import spade.utility.HelperFunctions;
 
 /**
  * All constants and convenience functions for OPM related to Audit data.
@@ -72,10 +73,17 @@ public class OPMConstants {
 			PROCESS_ITERATION = "iteration",
 			PROCESS_NAME = "name",
 			PROCESS_PID = "pid",
+			PROCESS_NS_PID = "ns pid",
 			PROCESS_PPID = "ppid",
 			PROCESS_SEEN_TIME = "seen time",
 			PROCESS_START_TIME = "start time",
 			PROCESS_UNIT = "unit",
+			PROCESS_MOUNT_NAMESPACE = "mount namespace",
+			PROCESS_USER_NAMESPACE = "user namespace",
+			PROCESS_NET_NAMESPACE = "net namespace",
+			PROCESS_PID_NAMESPACE = "pid namespace",
+			PROCESS_IPC_NAMESPACE = "ipc namespace",
+			PROCESS_PID_CHILDREN_NAMESPACE = "children pid namespace",
 			
 			// Artifact specific annotations
 			ARTIFACT_REMOTE_ADDRESS = "remote address",
@@ -86,6 +94,7 @@ public class OPMConstants {
 			ARTIFACT_FD1 = "fd 1",
 			ARTIFACT_MEMORY_ADDRESS = "memory address",
 			ARTIFACT_PATH = "path",
+			ARTIFACT_ROOT_PATH = "root path",
 			ARTIFACT_PERMISSIONS = "permissions", 
 			//ARTIFACT_PID = PROCESS_PID,
 			ARTIFACT_PROTOCOL = "protocol",
@@ -108,6 +117,9 @@ public class OPMConstants {
 			ARTIFACT_HOST_INTERFACE_NAME_PREFIX = "interface name",
 			ARTIFACT_HOST_INTERFACE_MAC_ADDRESS_PREFIX = "interface mac address",
 			ARTIFACT_HOST_INTERFACE_IP_ADDRESSES_PREFIX = "interface ip addresses",
+			ARTIFACT_SYSV_ID = "id",
+			ARTIFACT_SYSV_OUID = "owner uid",
+			ARTIFACT_SYSV_OGID = "owner gid",
 
 			// Allowed subtype annotation values
 			SUBTYPE_FILE = "file",
@@ -123,6 +135,9 @@ public class OPMConstants {
 			SUBTYPE_UNNAMED_PIPE = "unnamed pipe",
 			SUBTYPE_UNNAMED_UNIX_SOCKET_PAIR = "unix socket pair",
 			SUBTYPE_UNNAMED_NETWORK_SOCKET_PAIR = "network socket pair",
+			SUBTYPE_SYSV_MSG_Q = "system v message queue",
+			SUBTYPE_SYSV_SHARED_MEMORY = "system v shared memory",
+			SUBTYPE_POSIX_MSG_Q = "posix message queue",
 			
 			// General edge annotations
 			EDGE_EVENT_ID = "event id",
@@ -180,7 +195,20 @@ public class OPMConstants {
 			OPERATION_VMSPLICE = "vmsplice",
 			OPERATION_INIT_MODULE = "init_module",
 			OPERATION_FINIT_MODULE = "finit_module",
-			OPERATION_KILL = "kill";
+			OPERATION_KILL = "kill",
+			OPERATION_SETNS = "setns",
+			OPERATION_UNSHARE = "unshare",
+			OPERATION_MSGGET = "msgget",
+			OPERATION_MSGCTL = "msgctl",
+			OPERATION_MSGSND = "msgsnd",
+			OPERATION_MSGRCV = "msgrcv",
+			OPERATION_SHMGET = "shmget",
+			OPERATION_SHMAT = "shmat",
+			OPERATION_SHMCTL = "shmctl",
+			OPERATION_MQ_OPEN = "mq_open",
+			OPERATION_MQ_TIMEDSEND = "mq_timedsend",
+			OPERATION_MQ_TIMEDRECEIVE = "mq_timedreceive",
+			OPERATION_MQ_UNLINK = "mq_unlink";
 		
 	private static final Logger logger = Logger.getLogger(OPMConstants.class.getName());
 	
@@ -229,6 +257,19 @@ public class OPMConstants {
 		addSyscallsToOperations(OPERATION_UPDATE, SYSCALL.UPDATE);
 		addSyscallsToOperations(OPERATION_VMSPLICE, SYSCALL.VMSPLICE);
 		addSyscallsToOperations(OPERATION_WRITE, SYSCALL.WRITE, SYSCALL.WRITEV, SYSCALL.PWRITE, SYSCALL.PWRITEV);
+		addSyscallsToOperations(OPERATION_UNSHARE, SYSCALL.UNSHARE);
+		addSyscallsToOperations(OPERATION_SETNS, SYSCALL.SETNS);
+		addSyscallsToOperations(OPERATION_MSGGET, SYSCALL.MSGGET);
+		addSyscallsToOperations(OPERATION_MSGCTL, SYSCALL.MSGCTL);
+		addSyscallsToOperations(OPERATION_MSGRCV, SYSCALL.MSGRCV);
+		addSyscallsToOperations(OPERATION_MSGSND, SYSCALL.MSGSND);
+		addSyscallsToOperations(OPERATION_SHMGET, SYSCALL.SHMGET);
+		addSyscallsToOperations(OPERATION_SHMCTL, SYSCALL.SHMCTL);
+		addSyscallsToOperations(OPERATION_SHMAT, SYSCALL.SHMAT);
+		addSyscallsToOperations(OPERATION_MQ_OPEN, SYSCALL.MQ_OPEN);
+		addSyscallsToOperations(OPERATION_MQ_TIMEDSEND, SYSCALL.MQ_TIMEDSEND);
+		addSyscallsToOperations(OPERATION_MQ_TIMEDRECEIVE, SYSCALL.MQ_TIMEDRECEIVE);
+		addSyscallsToOperations(OPERATION_MQ_UNLINK, SYSCALL.MQ_UNLINK);
 	}
 	
 	/**
@@ -423,6 +464,18 @@ public class OPMConstants {
 	public static boolean isNetworkArtifact(AbstractVertex vertex){
 		if(vertex != null){
 			return SUBTYPE_NETWORK_SOCKET.equals(vertex.getAnnotation(ARTIFACT_SUBTYPE));
+		}
+		return false;
+	}
+	
+	public static boolean isCompleteNetworkArtifact(AbstractVertex vertex){
+		if(isNetworkArtifact(vertex)){
+			String localAddress = vertex.getAnnotation(ARTIFACT_LOCAL_ADDRESS);
+			String localPort = vertex.getAnnotation(ARTIFACT_LOCAL_PORT);
+			String remoteAddress = vertex.getAnnotation(ARTIFACT_REMOTE_ADDRESS);
+			String remotePort = vertex.getAnnotation(ARTIFACT_REMOTE_PORT);
+			return !HelperFunctions.isNullOrEmpty(localAddress) && !HelperFunctions.isNullOrEmpty(localPort)
+					&& !HelperFunctions.isNullOrEmpty(remoteAddress) && !HelperFunctions.isNullOrEmpty(remotePort);
 		}
 		return false;
 	}

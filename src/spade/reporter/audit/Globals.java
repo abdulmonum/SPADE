@@ -21,14 +21,15 @@ package spade.reporter.audit;
 
 import java.util.Map;
 
-import spade.utility.CommonFunctions;
+import spade.utility.HelperFunctions;
 
 // Global Audit reporter flags
 public class Globals{
 
 	// Currently only artifact related arguments
 	
-	public static final String unixSocketsKey = "unixSockets",
+	public static final String 
+					unixSocketsKey = "unixSockets",
 					versionNetworkSocketsKey = "versionNetworkSockets",
 					versionFilesKey = "versionFiles",
 					versionMemorysKey = "versionMemorys",
@@ -38,6 +39,9 @@ public class Globals{
 					versionUnixSocketsKey = "versionUnixSockets",
 					versionUnnamedUnixSocketPairsKey = "versionUnixSocketPairs",
 					versionUnnamedNetworkSocketPairsKey = "versionNetworkSocketPairs",
+					versionSysVMessageQueueKey = "versionSysVMessageQueue",
+					versionSysVSharedMemoryKey = "versionSysVSharedMemory",
+					versionPosixMessageQueueKey = "versionPosixMessageQueue",
 					versionsKey = "versions",
 					epochsKey = "epochs",
 					permissionsKey = "permissions";
@@ -52,6 +56,9 @@ public class Globals{
 					versionUnixSockets,
 					versionUnnamedUnixSocketPairs,
 					versionUnnamedNetworkSocketPairs,
+					versionSysVMessageQueue,
+					versionSysVSharedMemory,
+					versionPosixMessageQueue,
 					versions,
 					epochs,
 					permissions;
@@ -60,7 +67,9 @@ public class Globals{
 	private Globals(boolean unixSockets, boolean versionNetworkSockets, boolean versionFiles, 
 			boolean versionMemorys, boolean versionNamedPipes, boolean versionUnnamedPipes,
 			boolean versionUnknowns, boolean versionUnixSockets, boolean versionUnnamedUnixSocketPairs,
-			boolean versionUnnamedNetworkSocketPairs, boolean versions, boolean epochs, boolean permissions){
+			boolean versionUnnamedNetworkSocketPairs, 
+			boolean versionSysVMessageQueue, boolean versionSysVSharedMemory, boolean versionPosixMessageQueue,
+			boolean versions, boolean epochs, boolean permissions){
 		this.unixSockets = unixSockets;
 		this.versionNetworkSockets = versionNetworkSockets;
 		this.versionFiles = versionFiles;
@@ -71,6 +80,9 @@ public class Globals{
 		this.versionUnixSockets = versionUnixSockets;
 		this.versionUnnamedUnixSocketPairs = versionUnnamedUnixSocketPairs;
 		this.versionUnnamedNetworkSocketPairs = versionUnnamedNetworkSocketPairs;
+		this.versionSysVMessageQueue = versionSysVMessageQueue;
+		this.versionSysVSharedMemory = versionSysVSharedMemory;
+		this.versionPosixMessageQueue = versionPosixMessageQueue;
 		this.versions = versions;
 		this.epochs = epochs;
 		this.permissions = permissions;
@@ -80,19 +92,22 @@ public class Globals{
 	public String toString(){
 		return String.format("Audit flags (Globals): '%s'='%s', '%s'='%s', '%s'='%s', '%s'='%s', '%s'='%s',"
 				+ " '%s'='%s', '%s'='%s', '%s'='%s', '%s'='%s', '%s'='%s',"
-				+ " '%s'='%s', '%s'='%s', '%s'='%s'", 
+				+ " '%s'='%s', '%s'='%s', '%s'='%s', '%s'='%s', '%s'='%s', '%s'='%s'", 
 				unixSocketsKey, unixSockets, versionNetworkSocketsKey, versionNetworkSockets,
 				versionFilesKey, versionFiles, versionMemorysKey, versionMemorys,
 				versionNamedPipesKey, versionNamedPipes, versionUnnamedPipesKey, versionUnnamedPipes,
 				versionUnknownsKey, versionUnknowns, versionUnixSocketsKey, versionUnixSockets,
 				versionUnnamedUnixSocketPairsKey, versionUnnamedUnixSocketPairs, 
 				versionUnnamedNetworkSocketPairsKey, versionUnnamedNetworkSocketPairs,
+				versionSysVMessageQueueKey, versionSysVMessageQueue,
+				versionSysVSharedMemoryKey, versionSysVSharedMemory,
+				versionPosixMessageQueueKey, versionPosixMessageQueue,
 				versionsKey, versions, epochsKey, epochs,
 				permissionsKey, permissions);
 	}
 	
 	public static Globals parseArguments(String arguments) throws Exception{
-		Map<String, String> map = CommonFunctions.parseKeyValPairs(arguments);
+		Map<String, String> map = HelperFunctions.parseKeyValPairs(arguments);
 		return parseArguments(map);
 	}
 	
@@ -108,6 +123,9 @@ public class Globals{
 				parseBooleanArgument(map, versionUnixSocketsKey, true),
 				parseBooleanArgument(map, versionUnnamedUnixSocketPairsKey, true),
 				parseBooleanArgument(map, versionUnnamedNetworkSocketPairsKey, false),
+				parseBooleanArgument(map, versionSysVMessageQueueKey, true),
+				parseBooleanArgument(map, versionSysVSharedMemoryKey, true),
+				parseBooleanArgument(map, versionPosixMessageQueueKey, true),
 				parseBooleanArgument(map, versionsKey, true),
 				parseBooleanArgument(map, epochsKey, true),
 				parseBooleanArgument(map, permissionsKey, true));
@@ -118,7 +136,7 @@ public class Globals{
 		if(map == null){
 			throw new Exception("NULL arguments map");
 		}else{
-			if(CommonFunctions.isNullOrEmpty(key)){
+			if(HelperFunctions.isNullOrEmpty(key)){
 				throw new Exception("NULL/Empty argument key: " + "'"+key+"'");
 			}else{
 				String value = map.get(key);

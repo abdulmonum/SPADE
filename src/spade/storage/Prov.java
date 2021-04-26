@@ -16,27 +16,7 @@
  */
 package spade.storage;
 
-import org.apache.commons.codec.digest.DigestUtils;
-import org.apache.jena.rdf.model.Model;
-import org.apache.jena.rdf.model.Statement;
-import org.apache.jena.rdf.model.StmtIterator;
-import org.apache.jena.util.FileManager;
-import spade.core.AbstractEdge;
-import spade.core.AbstractStorage;
-import spade.core.AbstractVertex;
-import spade.core.Graph;
-import spade.edge.prov.Used;
-import spade.edge.prov.WasAssociatedWith;
-import spade.edge.prov.WasDerivedFrom;
-import spade.edge.prov.WasGeneratedBy;
-import spade.edge.prov.WasInformedBy;
-import spade.utility.CommonFunctions;
-import spade.vertex.prov.Activity;
-import spade.vertex.prov.Agent;
-import spade.vertex.prov.Entity;
-
 import java.io.FileWriter;
-import java.sql.ResultSet;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -48,8 +28,24 @@ import java.util.Set;
 import java.util.TimeZone;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+
+import org.apache.jena.rdf.model.Model;
+import org.apache.jena.rdf.model.Statement;
+import org.apache.jena.rdf.model.StmtIterator;
+import org.apache.jena.util.FileManager;
+
+import spade.core.AbstractEdge;
+import spade.core.AbstractStorage;
+import spade.core.AbstractVertex;
+import spade.edge.prov.Used;
+import spade.edge.prov.WasAssociatedWith;
+import spade.edge.prov.WasDerivedFrom;
+import spade.edge.prov.WasGeneratedBy;
+import spade.edge.prov.WasInformedBy;
+import spade.utility.HelperFunctions;
+import spade.vertex.prov.Activity;
+import spade.vertex.prov.Agent;
+import spade.vertex.prov.Entity;
 
 public class Prov extends AbstractStorage{
 
@@ -80,6 +76,7 @@ public class Prov extends AbstractStorage{
 	private final String TAB = "\t", NEWLINE = System.getProperty("line.separator");
 
 	private final Map<String, String> provoStringFormatsForEdgeTypes = new HashMap<String, String>(){
+		private static final long serialVersionUID = 6243453806316998044L;
 		{
 			put("spade.edge.prov.Used", "%s:%s %s:qualifiedUsage ["+NEWLINE+""+TAB+"a %s:Usage;"+NEWLINE+""+TAB+"%s:entity %s:%s;"+NEWLINE+"%s]; ."+NEWLINE+NEWLINE);
 			put("spade.edge.prov.WasAssociatedWith", "%s:%s %s:qualifiedAssociation ["+NEWLINE+""+TAB+"a %s:Association;"+NEWLINE+""+TAB+"%s:agent %s:%s;"+NEWLINE+"%s]; ."+NEWLINE+NEWLINE);
@@ -90,6 +87,7 @@ public class Prov extends AbstractStorage{
 	};
 
 	private final Map<String, String> provnStringFormatsForEdgeTypes = new HashMap<String, String>(){
+		private static final long serialVersionUID = -9073788318002492222L;
 		{
 			put("spade.edge.prov.Used", TAB+"used(%s:%s,%s:%s, - ,%s)"+NEWLINE);
 			put("spade.edge.prov.WasAssociatedWith", TAB+"wasAssociatedWith(%s:%s,%s:%s, - ,%s)"+NEWLINE);
@@ -106,7 +104,7 @@ public class Prov extends AbstractStorage{
 
 	@Override
 	public boolean initialize(String arguments) {
-		Map<String, String> args = CommonFunctions.parseKeyValPairs(arguments);
+		Map<String, String> args = HelperFunctions.parseKeyValPairs(arguments);
 
 		Map<String, String> nsPrefixToFileMap = new HashMap<String, String>();
 		nsPrefixToFileMap.putAll(args);
@@ -199,7 +197,7 @@ public class Prov extends AbstractStorage{
 	}
 
 	@Override
-	public boolean putVertex(AbstractVertex incomingVertex) {
+	public boolean storeVertex(AbstractVertex incomingVertex) {
 		try{
 			String serializedVertex = getSerializedVertex(incomingVertex);
 			outputFile.write(serializedVertex);
@@ -212,13 +210,12 @@ public class Prov extends AbstractStorage{
 	}
 
 	@Override
-	public ResultSet executeQuery(String query)
-	{
-		return null;
+	public final Object executeQuery(String query){
+		throw new RuntimeException("Prov storage does NOT support querying");
 	}
 
 	@Override
-	public boolean putEdge(AbstractEdge incomingEdge) {
+	public boolean storeEdge(AbstractEdge incomingEdge) {
 		try{
 			String serializedEdge = getSerializedEdge(incomingEdge);
 			outputFile.write(serializedEdge);
@@ -229,58 +226,6 @@ public class Prov extends AbstractStorage{
 			return false;
 		}
 	}
-
-	/**
-	 * This function queries the underlying storage and retrieves the edge
-	 * matching the given criteria.
-	 *
-	 * @param childVertexHash      hash of the source vertex.
-	 * @param parentVertexHash hash of the destination vertex.
-	 * @return returns edge object matching the given vertices OR NULL.
-	 */
-	@Override
-	public AbstractEdge getEdge(String childVertexHash, String parentVertexHash) {
-		return null;
-	}
-
-	/**
-	 * This function queries the underlying storage and retrieves the vertex
-	 * matching the given criteria.
-	 *
-	 * @param vertexHash hash of the vertex to find.
-	 * @return returns vertex object matching the given hash OR NULL.
-	 */
-	@Override
-	public AbstractVertex getVertex(String vertexHash) {
-		return null;
-	}
-
-	/**
-	 * This function finds the children of a given vertex.
-	 * A child is defined as a vertex which is the source of a
-	 * direct edge between itself and the given vertex.
-	 *
-	 * @param parentHash hash of the given vertex
-	 * @return returns graph object containing children of the given vertex OR NULL.
-	 */
-	@Override
-	public Graph getChildren(String parentHash) {
-		return null;
-	}
-
-	/**
-	 * This function finds the parents of a given vertex.
-	 * A parent is defined as a vertex which is the destination of a
-	 * direct edge between itself and the given vertex.
-	 *
-	 * @param childVertexHash hash of the given vertex
-	 * @return returns graph object containing parents of the given vertex OR NULL.
-	 */
-	@Override
-	public Graph getParents(String childVertexHash) {
-		return null;
-	}
-
 
 	public ProvFormat getProvFormatByFileExt(String filepath){
 		filepath = String.valueOf(filepath).trim().toLowerCase();
@@ -299,10 +244,10 @@ public class Prov extends AbstractStorage{
 
 				vertexString = String.format(provoStringFormatForVertex,
 						defaultNamespacePrefix,
-						DigestUtils.sha256Hex(vertex.toString()),
+						vertex.getIdentifierForExport(),
 						provNamespacePrefix,
 						vertex.getClass().getSimpleName(),
-						getProvOFormattedKeyValPair(vertex.getAnnotations()));
+						getProvOFormattedKeyValPair(vertex.getCopyOfAnnotations()));
 
 				break;
 			case PROVN:
@@ -310,8 +255,8 @@ public class Prov extends AbstractStorage{
 				vertexString = String.format(provnStringFormatForVertex,
 						vertex.getClass().getSimpleName().toLowerCase(),
 						defaultNamespacePrefix,
-						DigestUtils.sha256Hex(vertex.toString()),
-						getProvNFormattedKeyValPair(vertex.getAnnotations()));
+						vertex.getIdentifierForExport(),
+						getProvNFormattedKeyValPair(vertex.getCopyOfAnnotations()));
 
 				break;
 			default:
@@ -321,8 +266,8 @@ public class Prov extends AbstractStorage{
 	}
 
 	public String getSerializedEdge(AbstractEdge edge){
-		String childVertexKey = DigestUtils.sha256Hex(edge.getChildVertex().toString());
-		String destVertexKey = DigestUtils.sha256Hex(edge.getParentVertex().toString());
+		String childVertexKey = edge.getChildVertex().getIdentifierForExport();
+		String destVertexKey = edge.getParentVertex().getIdentifierForExport();
 		String edgeString = null;
 		switch (provOutputFormat) {
 			case PROVO:
@@ -334,7 +279,7 @@ public class Prov extends AbstractStorage{
 						provNamespacePrefix,
 						defaultNamespacePrefix,
 						destVertexKey,
-						getProvOFormattedKeyValPair(edge.getAnnotations()));
+						getProvOFormattedKeyValPair(edge.getCopyOfAnnotations()));
 
 				break;
 			case PROVN:
@@ -343,7 +288,7 @@ public class Prov extends AbstractStorage{
 						childVertexKey,
 						defaultNamespacePrefix,
 						destVertexKey,
-						getProvNFormattedKeyValPair(edge.getAnnotations()));
+						getProvNFormattedKeyValPair(edge.getCopyOfAnnotations()));
 				break;
 			default:
 				break;
@@ -467,7 +412,7 @@ public class Prov extends AbstractStorage{
 	}
 
 	public static void main(String [] args) throws Exception{
-		Activity a = new Activity();
+		Activity a = new Activity("abc");
 		a.addAnnotation("name", "a1");
 		Activity b = new Activity();
 		b.addAnnotation("name", "a2");
@@ -487,11 +432,12 @@ public class Prov extends AbstractStorage{
 		e4.addAnnotation("test", "anno");
 		Used e5 = new Used(b, f2);
 		e5.addAnnotation("operation", "read");
+		e5.addAnnotation("time", String.format("%.3f", ((double)System.currentTimeMillis() / 1000.000)));
 
 		Prov ttl = new Prov();
-		ttl.initialize("output=/home/ubwork/prov.ttl audit=/home/ubwork/Desktop/audit.rdfs");
+		ttl.initialize("output=/tmp/prov.ttl audit=/tmp/audit.rdfs");
 		Prov provn = new Prov();
-		provn.initialize("output=/home/ubwork/prov.provn audit=/home/ubwork/Desktop/audit.rdfs");
+		provn.initialize("output=/tmp/prov.provn audit=/tmp/audit.rdfs");
 
 		Prov provs[] = new Prov[]{ttl, provn};
 

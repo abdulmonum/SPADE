@@ -19,10 +19,6 @@
  */
 package spade.storage;
 
-import spade.core.AbstractEdge;
-import spade.core.AbstractVertex;
-import spade.core.Cache;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileWriter;
@@ -40,11 +36,15 @@ import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import static spade.core.Kernel.CONFIG_PATH;
-import static spade.core.Kernel.FILE_SEPARATOR;
-
 import au.com.bytecode.opencsv.CSVWriter;
-import spade.utility.CommonFunctions;
+import spade.core.AbstractEdge;
+import spade.core.AbstractVertex;
+import spade.core.Cache;
+import spade.core.Settings;
+import spade.query.quickgrail.core.QueryInstructionExecutor;
+import spade.storage.postgresql.PostgreSQLInstructionExecutor;
+import spade.storage.postgresql.PostgreSQLQueryEnvironment;
+import spade.utility.HelperFunctions;
 
 /**
  * Basic PostgreSQL storage implementation.
@@ -53,6 +53,13 @@ import spade.utility.CommonFunctions;
  */
 public class PostgreSQL extends SQL
 {
+	private PostgreSQLInstructionExecutor queryInstructionExecutor = null;
+	private PostgreSQLQueryEnvironment queryEnvironment = null;
+
+	private final String baseGraphName = "spade_base_graph";
+	private String tableNameBaseVertex = PostgreSQLQueryEnvironment.getVertexTableName(baseGraphName);
+    private String tableNameBaseEdge = PostgreSQLQueryEnvironment.getEdgeTableName(baseGraphName);
+	
     // Performance tuning note: Set this to higher value (e.g. 100000) to commit less often to db - This increases ingestion rate.
     // Downside: Any external (non atomic) quering to database won't report non-committed data.
     private int GLOBAL_TX_SIZE = 1000;
@@ -66,17 +73,19 @@ public class PostgreSQL extends SQL
     private boolean bulkUpload = true;
     private boolean setPrimaryKey = false;
     private boolean buildSecondaryIndexes = false;
+    
+    private boolean reset = false;
+    
     private List<Map<String, String>> edgeList = new ArrayList<>();
     private List<Map<String, String>> vertexList = new ArrayList<>();
     private ArrayList<String> edgeColumnNames = new ArrayList<>();
     private ArrayList<String> vertexColumnNames = new ArrayList<>();
 
-
     public PostgreSQL()
     {
         DUPLICATE_COLUMN_ERROR_CODE = "42701";
         logger = Logger.getLogger(PostgreSQL.class.getName());
-        String configFile = CONFIG_PATH + FILE_SEPARATOR + "spade.storage.PostgreSQL.config";
+        String configFile = Settings.getDefaultConfigFilePath(this.getClass());
         try
         {
             databaseConfigs.load(new FileInputStream(configFile));
@@ -93,6 +102,7 @@ public class PostgreSQL extends SQL
         bulkUpload = Boolean.parseBoolean(databaseConfigs.getProperty("bulkUpload", String.valueOf(bulkUpload)));
         reportingEnabled = Boolean.parseBoolean(databaseConfigs.getProperty("reportingEnabled",
                 String.valueOf(reportingEnabled)));
+        reset = Boolean.parseBoolean(databaseConfigs.getProperty("reset", String.valueOf(reset)));
 	GLOBAL_TX_SIZE = Integer.parseInt(databaseConfigs.getProperty("globalTxSize", String.valueOf(GLOBAL_TX_SIZE)));
         if(reportingEnabled)
         {
@@ -127,7 +137,7 @@ public class PostgreSQL extends SQL
     {
         try
         {
-            Map<String, String> argsMap = CommonFunctions.parseKeyValPairs(arguments);
+            Map<String, String> argsMap = HelperFunctions.parseKeyValPairs(arguments);
             String database = (argsMap.get("database") != null) ? argsMap.get("database") :
                     databaseConfigs.getProperty("database");
             String databaseUsername = (argsMap.get("databaseUsername") != null) ? argsMap.get("databaseUsername") :
@@ -147,6 +157,18 @@ public class PostgreSQL extends SQL
             return false;
         }
 
+        if(reset){
+        	try(Statement statement = dbConnection.createStatement()){
+        		statement.execute("drop table if exists " + VERTEX_TABLE);
+        		statement.execute("drop table if exists " + EDGE_TABLE);
+        		statement.execute("drop table if exists " + tableNameBaseVertex);
+        		statement.execute("drop table if exists " + tableNameBaseEdge);
+        	}catch(Exception e){
+        		logger.log(Level.SEVERE, "Failed to reset", e);
+        		return false;
+        	}
+        }
+        
         try
         {
             Statement dbStatement = dbConnection.createStatement();
@@ -170,7 +192,7 @@ public class PostgreSQL extends SQL
             {
                 String colName = metadata.getColumnLabel(i);
                 vertexColumnNames.add(colName);
-                vertexAnnotations.add(colName);
+                addVertexAnnotation(colName);
             }
 
             String createEdgeTable = "CREATE TABLE IF NOT EXISTS "
@@ -194,9 +216,27 @@ public class PostgreSQL extends SQL
             {
                 String colName = metadata.getColumnLabel(i);
                 edgeColumnNames.add(colName);
-                edgeAnnotations.add(colName);
+                addEdgeAnnotation(colName);
             }
 
+            String createBaseGraphVertexTable = "CREATE TABLE IF NOT EXISTS "
+                    + tableNameBaseVertex
+                    + "(\""
+                    + PRIMARY_KEY
+                    + "\""
+                    + " UUID"
+                    + ")";
+            dbStatement.execute(createBaseGraphVertexTable);
+
+            String createBaseGraphEdgeTable = "CREATE TABLE IF NOT EXISTS "
+                    + tableNameBaseEdge
+                    + "(\""
+                    + PRIMARY_KEY
+                    + "\""
+                    + " UUID"
+                    + ")";
+            dbStatement.execute(createBaseGraphEdgeTable);
+            
             if(buildSecondaryIndexes)
             {
                 String createVertexHashIndex = "CREATE INDEX IF NOT EXISTS hash_index ON vertex USING hash(\"hash\")";
@@ -220,7 +260,7 @@ public class PostgreSQL extends SQL
         }
     }
 
-    private void globalTxCheckin(boolean forcedFlush)
+    private synchronized void globalTxCheckin(boolean forcedFlush)
     {
         if ((globalTxCount % GLOBAL_TX_SIZE == 0) || (forcedFlush))
         {
@@ -276,14 +316,14 @@ public class PostgreSQL extends SQL
      *
      * @return  returns true if column creation in the database has been successful.
      */
-    protected boolean addColumn(String table_name, String column_name)
+    protected boolean addColumn(String table_name, final String column_name)
     {
         // If this column has already been added before for this table, then return
-        if ((table_name.equalsIgnoreCase(VERTEX_TABLE)) && vertexAnnotations.contains(column_name))
+        if ((table_name.equalsIgnoreCase(VERTEX_TABLE)) && vertexAnnotationIsPresent(column_name))
         {
             return true;
         }
-        else if ((table_name.equalsIgnoreCase(EDGE_TABLE)) && edgeAnnotations.contains(column_name))
+        else if ((table_name.equalsIgnoreCase(EDGE_TABLE)) && edgeAnnotationIsPresent(column_name))
         {
             return true;
         }
@@ -327,17 +367,28 @@ public class PostgreSQL extends SQL
         {
             if (table_name.equalsIgnoreCase(VERTEX_TABLE))
             {
-                vertexAnnotations.add(column_name);
+            	addVertexAnnotation(column_name);
             }
             else if (table_name.equalsIgnoreCase(EDGE_TABLE))
             {
-                edgeAnnotations.add(column_name);
+            	addEdgeAnnotation(column_name);
             }
         }
 
         return false;
     }
 
+    @Override
+	public synchronized boolean flushTransactions(boolean force){
+    	if(bulkUpload){
+    		flushBulkVertices(force);
+    		flushBulkEdges(force);
+    	}else{
+    		globalTxCheckin(force);
+    	}
+    	return true;
+    }
+    
     /**
      * This function inserts the given edge into the underlying storage(s) and
      * updates the cache(s) accordingly.
@@ -347,7 +398,7 @@ public class PostgreSQL extends SQL
      * not successful if the edge is already present in the storage.
      */
     @Override
-    public boolean putEdge(AbstractEdge incomingEdge)
+    public synchronized boolean storeEdge(AbstractEdge incomingEdge)
     {
         if(bulkUpload)
         {
@@ -355,7 +406,7 @@ public class PostgreSQL extends SQL
             return true;
         }
         String edgeHash = incomingEdge.bigHashCode();
-        if(Cache.isPresent(edgeHash))
+        if(Cache.isEdgePresent(edgeHash))
             return true;
 
         String childVertexHash = incomingEdge.getChildVertex().bigHashCode();
@@ -370,21 +421,21 @@ public class PostgreSQL extends SQL
         insertStringBuilder.append(PRIMARY_KEY);
         insertStringBuilder.append("\"");
         insertStringBuilder.append(", ");
-        if(!incomingEdge.getAnnotations().containsKey(CHILD_VERTEX_KEY))
+        if(!incomingEdge.getCopyOfAnnotations().containsKey(CHILD_VERTEX_KEY))
         {
             insertStringBuilder.append("\"");
             insertStringBuilder.append(CHILD_VERTEX_KEY);
             insertStringBuilder.append("\"");
             insertStringBuilder.append(", ");
         }
-        if(!incomingEdge.getAnnotations().containsKey(PARENT_VERTEX_KEY))
+        if(!incomingEdge.getCopyOfAnnotations().containsKey(PARENT_VERTEX_KEY))
         {
             insertStringBuilder.append("\"");
             insertStringBuilder.append(PARENT_VERTEX_KEY);
             insertStringBuilder.append("\"");
             insertStringBuilder.append(", ");
         }
-        for (String annotationKey : incomingEdge.getAnnotations().keySet())
+        for (String annotationKey : incomingEdge.getCopyOfAnnotations().keySet())
         {
             // Sanitize column name to remove special characters
             String newAnnotationKey;
@@ -411,13 +462,13 @@ public class PostgreSQL extends SQL
         // Add the hash code, and source and destination vertex Ids
         insertStringBuilder.append(edgeHash);
         insertStringBuilder.append("', ");
-        if(!incomingEdge.getAnnotations().containsKey(CHILD_VERTEX_KEY))
+        if(!incomingEdge.getCopyOfAnnotations().containsKey(CHILD_VERTEX_KEY))
         {
             insertStringBuilder.append("'");
             insertStringBuilder.append(childVertexHash);
             insertStringBuilder.append("', ");
         }
-        if(!incomingEdge.getAnnotations().containsKey(PARENT_VERTEX_KEY))
+        if(!incomingEdge.getCopyOfAnnotations().containsKey(PARENT_VERTEX_KEY))
         {
             insertStringBuilder.append("'");
             insertStringBuilder.append(parentVertexHash);
@@ -425,7 +476,7 @@ public class PostgreSQL extends SQL
         }
 
         // Add the annotation values
-        for (String annotationValue : incomingEdge.getAnnotations().keySet())
+        for (String annotationValue : incomingEdge.getCopyOfAnnotations().keySet())
         {
             String value = (ENABLE_SANITIZATION) ? incomingEdge.getAnnotation(annotationValue).replace("'", "\"") : incomingEdge.getAnnotation(annotationValue);
 
@@ -434,7 +485,6 @@ public class PostgreSQL extends SQL
             insertStringBuilder.append("', ");
         }
         insertString = insertStringBuilder.substring(0, insertStringBuilder.length() - 2) + ")";
-
         try
         {
             Statement s = dbConnection.createStatement();
@@ -466,7 +516,7 @@ public class PostgreSQL extends SQL
 
     private void processBulkEdges(AbstractEdge incomingEdge)
     {
-        Map<String, String> annotations = new HashMap<>(incomingEdge.getAnnotations());
+        Map<String, String> annotations = new HashMap<>(incomingEdge.getCopyOfAnnotations());
         annotations.put(PRIMARY_KEY, incomingEdge.bigHashCode());
         annotations.put(CHILD_VERTEX_KEY, incomingEdge.getChildVertex().bigHashCode());
         annotations.put(PARENT_VERTEX_KEY, incomingEdge.getParentVertex().bigHashCode());
@@ -475,7 +525,7 @@ public class PostgreSQL extends SQL
         {
             if(!edgeColumnNames.contains(annotationKey))
             {
-                edgeColumnNames.add(sanitizeColumn(annotationKey));
+                edgeColumnNames.add(annotationKey);
                 addColumn(EDGE_TABLE, annotationKey);
             }
         }
@@ -487,10 +537,11 @@ public class PostgreSQL extends SQL
         flushBulkEdges(false);
     }
 
-    private void flushBulkEdges(boolean forcedFlush)
+    private synchronized void flushBulkEdges(boolean forcedFlush)
     {
         if(( (edgeCount > 0) && (edgeCount % GLOBAL_TX_SIZE == 0) ) || forcedFlush)
         {
+        	StringBuilder edgeHashes = new StringBuilder((int) (edgeCount * 32));
             String edgeFileName = "/tmp/bulk_edges.csv";
             try
             {
@@ -511,7 +562,15 @@ public class PostgreSQL extends SQL
                     ArrayList<String> annotationValues = new ArrayList<>();
                     for(String edgeColumnName : edgeColumnNames)
                     {
-                        annotationValues.add(edge.get(edgeColumnName));
+                    	String annotationValue = edge.get(edgeColumnName);
+                        annotationValues.add(annotationValue);
+                        if(edgeColumnName.equals(PRIMARY_KEY))
+                        {
+                            edgeHashes.append("(");
+                            edgeHashes.append("'");
+                            edgeHashes.append(annotationValue);
+                            edgeHashes.append("'), ");
+                        }
                     }
                     writer.writeNext(annotationValues.toArray(new String[annotationValues.size()]));
                 }
@@ -531,6 +590,16 @@ public class PostgreSQL extends SQL
             {
                 Statement s = dbConnection.createStatement();
                 s.execute(copyTableString);
+                if(edgeHashes.length() > 0)
+                {
+                    String baseGraphEdgeInsert = "INSERT INTO "
+                            + tableNameBaseEdge
+                            + "(\""
+                            + PRIMARY_KEY
+                            + "\") VALUES "
+                            + edgeHashes.substring(0, edgeHashes.length() - 2);
+                    s.execute(baseGraphEdgeInsert);
+                }
                 s.close();
                 globalTxCheckin(true);
                 edgeList.clear();
@@ -553,24 +622,25 @@ public class PostgreSQL extends SQL
 
     private void processBulkVertices(AbstractVertex incomingVertex)
     {
-        Map<String, String> annotations = new HashMap<>(incomingVertex.getAnnotations());
+        Map<String, String> annotations = incomingVertex.getCopyOfAnnotations();
         annotations.put(PRIMARY_KEY, incomingVertex.bigHashCode());
         vertexList.add(annotations);
         for(String annotationKey: annotations.keySet())
         {
             if(!vertexColumnNames.contains(annotationKey))
             {
-                vertexColumnNames.add(sanitizeColumn(annotationKey));
+                vertexColumnNames.add(annotationKey);
                 addColumn(VERTEX_TABLE, annotationKey);
             }
         }
         flushBulkVertices(false);
     }
 
-    private void flushBulkVertices(boolean forcedFlush)
+    private synchronized void flushBulkVertices(boolean forcedFlush)
     {
         if(( (vertexCount > 0) && (vertexCount % GLOBAL_TX_SIZE == 0) ) || forcedFlush)
         {
+        	StringBuilder vertexHashes = new StringBuilder((int) (vertexCount * 32));
             String vertexFileName = "/tmp/bulk_vertices.csv";
             try
             {
@@ -590,7 +660,15 @@ public class PostgreSQL extends SQL
                     ArrayList<String> annotationValues = new ArrayList<>();
                     for(String vertexColumnName : vertexColumnNames)
                     {
-                        annotationValues.add(vertex.get(vertexColumnName));
+                    	String annotationValue = vertex.get(vertexColumnName);
+                        annotationValues.add(annotationValue);
+                        if(vertexColumnName.equals(PRIMARY_KEY))
+                        {
+                            vertexHashes.append("(");
+                            vertexHashes.append("'");
+                            vertexHashes.append(annotationValue);
+                            vertexHashes.append("'), ");
+                        }
                     }
                     writer.writeNext(annotationValues.toArray(new String[annotationValues.size()]));
                 }
@@ -610,6 +688,16 @@ public class PostgreSQL extends SQL
             {
                 Statement s = dbConnection.createStatement();
                 s.execute(copyTableString);
+                if(vertexHashes.length() > 0)
+                {
+                    String baseGraphVertexInsert = "INSERT INTO "
+                            + tableNameBaseVertex
+                            + "(\""
+                            + PRIMARY_KEY
+                            + "\") VALUES "
+                            + vertexHashes.substring(0, vertexHashes.length() - 2);
+                    s.execute(baseGraphVertexInsert);
+                }
                 s.close();
                 globalTxCheckin(true);
                 vertexList.clear();
@@ -640,7 +728,7 @@ public class PostgreSQL extends SQL
      * not successful if the vertex is already present in the storage.
      */
     @Override
-    public boolean putVertex(AbstractVertex incomingVertex)
+    public synchronized boolean storeVertex(AbstractVertex incomingVertex)
     {
         if(bulkUpload)
         {
@@ -648,7 +736,7 @@ public class PostgreSQL extends SQL
             return true;
         }
         String vertexHash = incomingVertex.bigHashCode();
-        if(Cache.isPresent(vertexHash))
+        if(Cache.isVertexPresent(vertexHash))
             return true;
 
         // Use StringBuilder to build the PostgreSQL insert statement
@@ -660,7 +748,7 @@ public class PostgreSQL extends SQL
         insertStringBuilder.append(PRIMARY_KEY);
         insertStringBuilder.append("\"");
         insertStringBuilder.append(", ");
-        for (String annotationKey : incomingVertex.getAnnotations().keySet())
+        for (String annotationKey : incomingVertex.getCopyOfAnnotations().keySet())
         {
             // Sanitize column name to remove special characters
             String newAnnotationKey;
@@ -691,7 +779,7 @@ public class PostgreSQL extends SQL
         insertStringBuilder.append("', ");
 
         // Add the annotation values
-        for (String annotationValue : incomingVertex.getAnnotations().keySet())
+        for (String annotationValue : incomingVertex.getCopyOfAnnotations().keySet())
         {
             String value = (ENABLE_SANITIZATION) ? incomingVertex.getAnnotation(annotationValue).replace("'", "\"") :
                     incomingVertex.getAnnotation(annotationValue);
@@ -702,10 +790,19 @@ public class PostgreSQL extends SQL
         }
         insertString = insertStringBuilder.substring(0, insertStringBuilder.length() - 2) + ")";
 
+        String baseGraphVertexInsert = "INSERT INTO "
+                + tableNameBaseVertex
+                + "(\""
+                + PRIMARY_KEY
+                + "\") VALUES ('"
+                + incomingVertex.bigHashCode()
+                + "')";
+        
         try
         {
             Statement s = dbConnection.createStatement();
             s.execute(insertString);
+            s.execute(baseGraphVertexInsert);
             s.close();
             globalTxCheckin(false);
         }
@@ -728,7 +825,7 @@ public class PostgreSQL extends SQL
     }
 
     @Override
-    public ResultSet executeQuery(String query)
+    public synchronized ResultSet executeQuery(String query)
     {
         ResultSet result = null;
         try
@@ -746,4 +843,87 @@ public class PostgreSQL extends SQL
 
         return result;
     }
+    
+    private boolean doesVertexColumnExist(String columnName){
+    	return vertexColumnNames.contains(columnName);
+    }
+    
+    private boolean doesEdgeColumnExist(String columnName){
+    	return edgeColumnNames.contains(columnName);
+    }
+
+	public synchronized List<List<String>> executeQueryForResult(String query, boolean addColumnNames){
+		Statement queryStatement = null;
+		try{
+			globalTxCheckin(true);
+			queryStatement = dbConnection.createStatement();
+			if(CURSOR_FETCH_SIZE > 0){
+				queryStatement.setFetchSize(CURSOR_FETCH_SIZE);
+			}
+			boolean resultIsResultSet = queryStatement.execute(query);
+			if(resultIsResultSet){
+				ResultSet resultSet = queryStatement.getResultSet();
+				if(resultSet != null){
+					List<List<String>> listOfList = new ArrayList<List<String>>();
+					if(resultSet != null){
+						int columnCount = resultSet.getMetaData().getColumnCount();
+						if(addColumnNames){
+							List<String> heading = new ArrayList<String>();
+							listOfList.add(heading);
+							for(int i = 0; i < columnCount; i++){
+								heading.add(resultSet.getMetaData().getColumnLabel(i+1));
+							}
+						}
+						while(resultSet.next()){
+							List<String> sublist = new ArrayList<String>();
+							listOfList.add(sublist);
+							for(int i = 0; i < columnCount; i++){
+								Object cellObject = resultSet.getObject(i + 1);
+								if(resultSet.wasNull()){
+									sublist.add(null);
+								}else{
+									sublist.add(String.valueOf(cellObject));
+								}
+							}
+						}
+					}
+					return listOfList;
+				}
+			}
+			// Check if update count
+			List<List<String>> listOfList = new ArrayList<List<String>>();
+			List<String> sublist0 = new ArrayList<String>(); sublist0.add("count"); listOfList.add(sublist0);
+			List<String> sublist1 = new ArrayList<String>(); sublist1.add(String.valueOf(queryStatement.getUpdateCount())); listOfList.add(sublist1);
+			return listOfList;
+		}catch(Exception ex){
+			logger.log(Level.SEVERE, "PostgreSQL query execution not successful!", ex);
+			throw new RuntimeException("Query failed: " + query, ex);
+		}finally{
+			try{ if(queryStatement != null){queryStatement.close();} }catch(Exception e){}
+		}
+	}
+    
+	@Override
+	public QueryInstructionExecutor getQueryInstructionExecutor(){
+		synchronized(this){
+			if(queryEnvironment == null){
+				queryEnvironment = new PostgreSQLQueryEnvironment(baseGraphName, this);
+				if(reset){
+					queryEnvironment.resetWorkspace();
+				}else{
+					queryEnvironment.initialize();
+				}
+			}
+			if(queryInstructionExecutor == null){
+				queryInstructionExecutor = new PostgreSQLInstructionExecutor(
+						this, queryEnvironment, 
+						PRIMARY_KEY,
+						CHILD_VERTEX_KEY,
+						PARENT_VERTEX_KEY,
+						VERTEX_TABLE,
+						EDGE_TABLE);
+			}
+		}
+		return queryInstructionExecutor;
+	}
 }
