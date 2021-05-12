@@ -27,11 +27,7 @@ import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Signature;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -39,8 +35,12 @@ import spade.query.quickgrail.instruction.ExportGraph;
 import spade.query.quickgrail.instruction.GetLineage.Direction;
 import spade.storage.Graphviz;
 import spade.storage.JSON;
+import spade.utility.AggregateStatistics;
 import spade.utility.DotConfiguration;
 import spade.utility.HelperFunctions;
+
+import spade.utility.AggregateStatistics.AggregateType;
+import spade.utility.AggregateStatistics.ElementType;
 
 /**
  * This class is used to represent query responses using sets for edges and
@@ -57,6 +57,11 @@ public class Graph implements Serializable{
 	private final Set<AbstractVertex> vertexSet = new LinkedHashSet<>();
 	private final Set<AbstractEdge> edgeSet = new LinkedHashSet<>();
 
+	private final ResultMetaData resultMetaData = new ResultMetaData();
+	public ResultMetaData getResultMetaData()
+	{
+		return this.resultMetaData;
+	}
 	/**
 	 * Fields for discrepancy check and query params
 	 */
@@ -527,6 +532,79 @@ public class Graph implements Serializable{
 		}
 	}
 
+	public class ResultMetaData
+	{
+		// can also have this:
+		// annotationName -> [aggregateType, data, private]
+		// annotationName -> [AggregateType, Object, boolean]
+
+		// Key -> value
+		// (annotation, aggregateType)-> (value)
+		// value scan be List, Float, Int, etc.
+		private Map<Key, Object> vertexMetaData;
+		private Map<Key, Object> edgeMetaData;
+
+		public class Key
+		{
+			String annotationName;
+			AggregateType aggregateType;
+
+			public Key(String annotationName, AggregateType aggregateType)
+			{
+				this.annotationName = annotationName;
+				this.aggregateType = aggregateType;
+			}
+		}
+
+		public Object getMetaData(String annotationName, AggregateType aggregateType,
+								  ElementType elementType)
+		{
+			Key key = new Key(annotationName, aggregateType);
+			if(elementType == ElementType.VERTEX)
+			{
+				Object obj = vertexMetaData.get(key);
+				if(obj != null)
+					return obj;
+				if(aggregateType == AggregateType.HISTOGRAM)
+				{
+					Map<String, Integer> histogram = AggregateStatistics.computeHistogram
+													(Graph.this, annotationName, elementType);
+					List<Integer> values = (List<Integer>) histogram.values();
+					vertexMetaData.put(key, values);
+					return values;
+				}
+			}
+			else if(elementType == ElementType.EDGE)
+			{
+				Object obj = edgeMetaData.get(key);
+				if(obj != null)
+					return obj;
+				if(aggregateType == AggregateType.HISTOGRAM)
+				{
+					Map<String, Integer> histogram = AggregateStatistics.computeHistogram
+													(Graph.this, annotationName, elementType);
+					List<Integer> values = (List<Integer>) histogram.values();
+					edgeMetaData.put(key, values);
+					return values;
+				}
+			}
+			return null;
+		}
+
+		public void setMetaData(String annotationName, AggregateType aggregateType,
+								ElementType elementType, Object value)
+		{
+			Key key = new Key(annotationName, aggregateType);
+			if(elementType == ElementType.VERTEX)
+			{
+				vertexMetaData.put(key, value);
+			}
+			else if(elementType == ElementType.EDGE)
+			{
+				edgeMetaData.put(key, value);
+			}
+		}
+	}
 }
 
 /*

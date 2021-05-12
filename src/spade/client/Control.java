@@ -37,17 +37,17 @@ import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManagerFactory;
 
-import jline.ArgumentCompletor;
-import jline.Completor;
-import jline.ConsoleReader;
-import jline.MultiCompletor;
-import jline.NullCompletor;
-import jline.SimpleCompletor;
+//import jline.ArgumentCompletor;
+//import jline.Completor;
+//import jline.ConsoleReader;
+//import jline.MultiCompletor;
+//import jline.NullCompletor;
+//import jline.SimpleCompletor;
 import spade.core.Settings;
 
 public class Control {
 
-	private static ConsoleReader commandReader;
+//	private static ConsoleReader commandReader;
     private static PrintStream outputStream;
     private static PrintStream errorStream;
     private volatile static PrintStream SPADEControlIn;
@@ -126,43 +126,43 @@ public class Control {
 			outputStream = System.out;
 	        errorStream = System.err;
 	        
-	        commandReader = new ConsoleReader();
-	        
-	        try{ commandReader.getHistory().setHistoryFile(new File(historyFile)); }catch(Exception e){ /* ignore */ }
-	        
-	        List<Completor> addArguments = new LinkedList<>();
-            addArguments.add(new SimpleCompletor(new String[]{"add"}));
-            addArguments.add(new SimpleCompletor(new String[]{"filter", "storage", "reporter",  "transformer", "analyzer"}));
-            addArguments.add(new NullCompletor());
-
-            List<Completor> removeArguments = new LinkedList<>();
-            removeArguments.add(new SimpleCompletor(new String[]{"remove"}));
-            removeArguments.add(new SimpleCompletor(new String[]{"filter", "storage", "reporter",  "transformer", "analyzer"}));
-            removeArguments.add(new NullCompletor());
-
-            List<Completor> listArguments = new LinkedList<>();
-            listArguments.add(new SimpleCompletor(new String[]{"list"}));
-            listArguments.add(new SimpleCompletor(new String[]{"filters", "storages", "reporters", "all",  "transformers", "analyzers"}));
-            listArguments.add(new NullCompletor());
-
-            List<Completor> configArguments = new LinkedList<>();
-            configArguments.add(new SimpleCompletor(new String[]{"config"}));
-            configArguments.add(new SimpleCompletor(new String[]{"load", "save"}));
-            configArguments.add(new NullCompletor());
-            
-            List<Completor> setArguments = new LinkedList<>();
-            setArguments.add(new SimpleCompletor(new String[]{"set"}));
-            setArguments.add(new SimpleCompletor(new String[]{"storage"}));
-            setArguments.add(new NullCompletor());
-
-            List<Completor> completors = new LinkedList<>();
-            completors.add(new ArgumentCompletor(addArguments));
-            completors.add(new ArgumentCompletor(removeArguments));
-            completors.add(new ArgumentCompletor(listArguments));
-            completors.add(new ArgumentCompletor(configArguments));
-            completors.add(new ArgumentCompletor(setArguments));
-
-            commandReader.addCompletor(new MultiCompletor(completors));
+//	        commandReader = new ConsoleReader();
+//
+//	        try{ commandReader.getHistory().setHistoryFile(new File(historyFile)); }catch(Exception e){ /* ignore */ }
+//
+//	        List<Completor> addArguments = new LinkedList<>();
+//            addArguments.add(new SimpleCompletor(new String[]{"add"}));
+//            addArguments.add(new SimpleCompletor(new String[]{"filter", "storage", "reporter",  "transformer", "analyzer"}));
+//            addArguments.add(new NullCompletor());
+//
+//            List<Completor> removeArguments = new LinkedList<>();
+//            removeArguments.add(new SimpleCompletor(new String[]{"remove"}));
+//            removeArguments.add(new SimpleCompletor(new String[]{"filter", "storage", "reporter",  "transformer", "analyzer"}));
+//            removeArguments.add(new NullCompletor());
+//
+//            List<Completor> listArguments = new LinkedList<>();
+//            listArguments.add(new SimpleCompletor(new String[]{"list"}));
+//            listArguments.add(new SimpleCompletor(new String[]{"filters", "storages", "reporters", "all",  "transformers", "analyzers"}));
+//            listArguments.add(new NullCompletor());
+//
+//            List<Completor> configArguments = new LinkedList<>();
+//            configArguments.add(new SimpleCompletor(new String[]{"config"}));
+//            configArguments.add(new SimpleCompletor(new String[]{"load", "save"}));
+//            configArguments.add(new NullCompletor());
+//
+//            List<Completor> setArguments = new LinkedList<>();
+//            setArguments.add(new SimpleCompletor(new String[]{"set"}));
+//            setArguments.add(new SimpleCompletor(new String[]{"storage"}));
+//            setArguments.add(new NullCompletor());
+//
+//            List<Completor> completors = new LinkedList<>();
+//            completors.add(new ArgumentCompletor(addArguments));
+//            completors.add(new ArgumentCompletor(removeArguments));
+//            completors.add(new ArgumentCompletor(listArguments));
+//            completors.add(new ArgumentCompletor(configArguments));
+//            completors.add(new ArgumentCompletor(setArguments));
+//
+//            commandReader.addCompletor(new MultiCompletor(completors));
 	        return true;
     	}catch(Exception e){
     		System.err.println("Unable to set up local communication streams! " + e);
@@ -253,16 +253,16 @@ public class Control {
     	        }
     		}
     		// Read the next command from the input stream
-    		try{
-    			command = commandReader.readLine();
-    			// If end of stream then set the command to exit
-        		if(command == null){ // End of input
-        			command = "exit";
-        		}
-    		}catch(Exception e){
-    			errorStream.println("Failed to read command '"+command+"' from user! " + e);
-    			break;
-    		}
+//    		try{
+//    			command = commandReader.readLine();
+//    			// If end of stream then set the command to exit
+//        		if(command == null){ // End of input
+//        			command = "exit";
+//        		}
+//    		}catch(Exception e){
+//    			errorStream.println("Failed to read command '"+command+"' from user! " + e);
+//    			break;
+//    		}
     	}while(true);
     	
     }

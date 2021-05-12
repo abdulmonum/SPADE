@@ -24,7 +24,7 @@ import java.util.HashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import jline.ConsoleReader;
+//import jline.ConsoleReader;
 import spade.core.AbstractEdge;
 import spade.core.AbstractFilter;
 import spade.core.AbstractVertex;
@@ -51,21 +51,21 @@ public class GraphUtility {
             outputStream.println("");
             outputStream.println("Graph Query Utility");
             outputStream.println("");
-            ConsoleReader commandReader = new ConsoleReader();
-
-            while (true) {
-                try {
-                    outputStream.print(COMMAND_PROMPT);
-                    String line = commandReader.readLine();
-                    if (line.equals("exit")) {
-                        break;
-                    } else {
-                        processQuery(line);
-                    }
-                } catch (Exception exception) {
-                    exception.printStackTrace();
-                }
-            }
+//            ConsoleReader commandReader = new ConsoleReader();
+//
+//            while (true) {
+//                try {
+//                    outputStream.print(COMMAND_PROMPT);
+//                    String line = commandReader.readLine();
+//                    if (line.equals("exit")) {
+//                        break;
+//                    } else {
+//                        processQuery(line);
+//                    }
+//                } catch (Exception exception) {
+//                    exception.printStackTrace();
+//                }
+//            }
         } catch (Exception exception) {
             exception.printStackTrace();
         }

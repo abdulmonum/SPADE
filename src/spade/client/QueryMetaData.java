@@ -34,6 +34,12 @@ public class QueryMetaData implements Serializable{
 	private Set<AbstractVertex> rootVertices = new HashSet<>();
 	private Integer maxLength;
 	private GetLineage.Direction direction;
+	private String annotationName;
+
+	public String getAnnotationName()
+	{
+		return annotationName;
+	}
 
 	public Set<AbstractVertex> getRootVertices(){
 		return rootVertices;

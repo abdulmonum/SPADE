@@ -1,6 +1,6 @@
 package spade.query.scaffold;
 
-import kafka.security.auth.Write;
+//import kafka.security.auth.Write;
 import org.apache.commons.lang.StringUtils;
 import org.iq80.leveldb.CompressionType;
 import org.iq80.leveldb.DB;

@@ -28,7 +28,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.apache.avro.generic.GenericContainer;
-import org.apache.kafka.clients.producer.ProducerConfig;
+//import org.apache.kafka.clients.producer.ProducerConfig;
 
 import spade.core.AbstractEdge;
 import spade.core.AbstractStorage;
@@ -190,26 +190,26 @@ public class Kafka extends AbstractStorage{
 	}
 	
 	public static DataWriter getDataWriter(Properties properties) throws Exception{
-		if(properties.get(Kafka.OUTPUT_FILE_KEY) != null){
-			if(String.valueOf(properties.get(Kafka.OUTPUT_FILE_KEY)).endsWith(".json")){
-				return new JsonFileWriter(properties.getProperty(Kafka.SCHEMA_FILE_KEY), properties.getProperty(Kafka.OUTPUT_FILE_KEY));
-			}else{
-				return new FileWriter(properties.getProperty(Kafka.SCHEMA_FILE_KEY), properties.getProperty(Kafka.OUTPUT_FILE_KEY));
-			}
-		}else if(properties.getProperty(Kafka.SERVER_KEY) != null){
-			return new ServerWriter(properties);
-		}
+//		if(properties.get(Kafka.OUTPUT_FILE_KEY) != null){
+//			if(String.valueOf(properties.get(Kafka.OUTPUT_FILE_KEY)).endsWith(".json")){
+//				return new JsonFileWriter(properties.getProperty(Kafka.SCHEMA_FILE_KEY), properties.getProperty(Kafka.OUTPUT_FILE_KEY));
+//			}else{
+//				return new FileWriter(properties.getProperty(Kafka.SCHEMA_FILE_KEY), properties.getProperty(Kafka.OUTPUT_FILE_KEY));
+//			}
+//		}else if(properties.getProperty(Kafka.SERVER_KEY) != null){
+//			return new ServerWriter(properties);
+//		}
 		return null;
 	}	
 	
 	protected Properties getDefaultKafkaProducerProperties(String kafkaServer, String kafkaTopic, String kafkaProducerID, String schemaFilename){
 		Properties properties = new Properties();
-		properties.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServer);
-		properties.put(ProducerConfig.CLIENT_ID_CONFIG, kafkaProducerID);
-		properties.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
-                "org.apache.kafka.common.serialization.StringSerializer");
-		properties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
-				"org.apache.kafka.common.serialization.StringSerializer");
+//		properties.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServer);
+//		properties.put(ProducerConfig.CLIENT_ID_CONFIG, kafkaProducerID);
+//		properties.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
+//                "org.apache.kafka.common.serialization.StringSerializer");
+//		properties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
+//				"org.apache.kafka.common.serialization.StringSerializer");
 		return properties;
 	}
 	
