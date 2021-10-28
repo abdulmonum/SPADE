@@ -1,3 +1,19 @@
+/*
+ --------------------------------------------------------------------------------
+ SPADE - Support for Provenance Auditing in Distributed Environments.
+ Copyright (C) 2015 SRI International
+ This program is free software: you can redistribute it and/or  
+ modify it under the terms of the GNU General Public License as  
+ published by the Free Software Foundation, either version 3 of the  
+ License, or (at your option) any later version.
+ This program is distributed in the hope that it will be useful,  
+ but WITHOUT ANY WARRANTY; without even the implied warranty of  
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU  
+ General Public License for more details.
+ You should have received a copy of the GNU General Public License  
+ along with this program. If not, see <http://www.gnu.org/licenses/>.
+ --------------------------------------------------------------------------------
+*/
 package spade.transformer;
 
 import java.io.File;
@@ -19,6 +35,24 @@ import spade.core.Graph;
 import spade.core.Settings;
 import spade.utility.HelperFunctions;
 import spade.reporter.audit.OPMConstants;
+
+
+/*
+ --------------------------------------------------------------------------------
+ @What it does?
+    The following transformer serves the purpose of merging the similar vertices
+    into a singular vertex and then adjusting the inbound and outbound edges. The
+    transformer also deletes the annotations in the vertices which have differing
+    annotations across similar vertices.
+ 
+ @When should you use it?
+    If the graph you are working on is condensed where there are multiple vertices
+    that can be merged on a set of keys. Doing this increases readibility of the
+    graph.
+ 
+ @authors Shahpar Khan, Abdul Monum, Mashal Abbas, and Saadullah
+ --------------------------------------------------------------------------------
+*/
 
 public class MergeVertex extends AbstractTransformer{
 
@@ -46,89 +80,108 @@ public class MergeVertex extends AbstractTransformer{
     public Graph transform(Graph graph, ExecutionContext context){
         
         
-        // vertex frequency of vertices with similar hashes
-        Map<String, Integer> vertexFrequencies = new HashMap<String, Integer>();
         // corresponding vertices map
         Map<String, AbstractVertex> mergedVertices = new HashMap<String, AbstractVertex>();
 
-        /*
-         * creating merge vertices
-         */
+        // creating merge vertices
         for(AbstractVertex v : graph.vertexSet()){
             
-            //AbstractVertex vertex = v.copyAsVertex();
             String hash = vertexHashForKeys(v);
-	        if(hash == null || hash.length() == 0) { continue;}
+	        if(hash == null || hash.length() == 0){continue;}
 
-            if (vertexFrequencies.get(hash) == null || vertexFrequencies.get(hash)  == 0) {
+            if (mergedVertices.get(hash) == null){
 
                 AbstractVertex vertex = v.copyAsVertex();
-                vertexFrequencies.put(hash, 1);
                 mergedVertices.put(hash, vertex);
                 
             } else {
-
-                vertexFrequencies.put(hash, vertexFrequencies.get(hash) + 1);
                 AbstractVertex mergedVertex = mergedVertices.get(hash);
+                Map<String, String> mergedVertexAnnotations = mergedVertex.getCopyOfAnnotations();
+
+                Map<String, String> newVertexAnnotations = v.getCopyOfAnnotations();
                 
-                for (String annotationKey : v.getAnnotationKeys()) {
+                // for-loop to remove annotations that have differeing value across similar vertices 
+                for(Map.Entry<String, String> set : mergedVertexAnnotations.entrySet()){
+                    String mergedVertexKey = set.getKey();
+                    String mergedVertexValue = set.getValue();
 
-                    String newAnnotation = v.getAnnotation(annotationKey);
-                    String mergedAnnotation = mergedVertex.getAnnotation(annotationKey);
-        
-                    if (newAnnotation != null && mergedAnnotation != null && !mergedAnnotation.contains(newAnnotation)){
+                    String newVertexValue = newVertexAnnotations.get(mergedVertexKey);
 
-                        mergedVertex.removeAnnotation(annotationKey);
-                        mergedVertex.addAnnotation(annotationKey, mergedAnnotation + "," + newAnnotation);
-                    } //new annotation to add
-                    else if (mergedAnnotation == null && newAnnotation != null){
-
-                        mergedVertex.addAnnotation(annotationKey, newAnnotation);
+                    if((newVertexValue != null) && (mergedVertexValue != null) && !(newVertexValue.contains(mergedVertexValue))){
+                        String removedKey = mergedVertex.removeAnnotation(mergedVertexKey);
                     }
-                
+                    
                 }
-            
-                mergedVertices.put(hash, mergedVertex);//merged vertex   
-            }
 
+                mergedVertices.put(hash, mergedVertex);
+
+            }
+		
         }
 
         Graph resultGraph = new Graph();
 
+        // pushing all the merged vertices to the result graph
         for(Map.Entry<String, AbstractVertex> set : mergedVertices.entrySet()){
+
             AbstractVertex mergedVertex = set.getValue();
-            String mergedVertexHash = set.getKey();
-            resultGraph.putVertex(mergedVertex);
-            for (AbstractEdge edge: graph.edgeSet()){
+            resultGraph.putVertex(mergedVertex);            
+        }
 
-                AbstractVertex newChild = edge.getChildVertex().copyAsVertex();
-		        AbstractVertex newParent = edge.getParentVertex().copyAsVertex();
-		        AbstractEdge newEdge = new Edge(newChild, newParent);
 
-                if(edge.getChildVertex() != null) {
-                    String hash = vertexHashForKeys(edge.getChildVertex());
+        for(AbstractEdge edge: graph.edgeSet()){
+  
+            AbstractEdge newEdge = createNewWithoutAnnotations(edge);
+            boolean foundChild = false;
+            boolean foundParent = false;
+
+
+            // fixing the parent and child vertex of each edge
+            // this is necessary due to merging of multiple vertices
+            // finally adding the edge to result graph
+            for(Map.Entry<String, AbstractVertex> set : mergedVertices.entrySet()){
+        
+                if((foundParent == true) && (foundChild == true)){
+                    break;
+                }
+
+                AbstractVertex mergedVertex = set.getValue();
+                String mergedVertexHash = set.getKey();
+
+                if(newEdge.getChildVertex() != null){
+
+                    String hash = vertexHashForKeys(newEdge.getChildVertex());
+                    
                     if(hash != null && hash.equals(mergedVertexHash)) {
+                        foundChild = true;
                         newEdge.setChildVertex(mergedVertex);
                     }
                     
                 }
-                if(edge.getParentVertex() != null) {
-                    String hash = vertexHashForKeys(edge.getParentVertex());
+
+                if(newEdge.getParentVertex() != null){
+                    String hash = vertexHashForKeys(newEdge.getParentVertex());
+
                     if(hash != null && hash.equals(mergedVertexHash)) {
+                        foundParent = true;
                         newEdge.setParentVertex(mergedVertex);
                     }
                 }
-                resultGraph.putEdge(newEdge);
             }
 
-        }
+            if(!(vertexHashForKeys(newEdge.getChildVertex()).equals(vertexHashForKeys(newEdge.getParentVertex()))) && (foundChild == true) && (foundParent == true)){
+                resultGraph.putEdge(newEdge);
+            }
+	    }
 
         return resultGraph;
         
     }
-    private String vertexHashForKeys(AbstractVertex vertex) {
+    
+    // function to create hash by concatenating the annotations
+    private String vertexHashForKeys(AbstractVertex vertex){
 
-	String hash = new String();
+	    String hash = new String();
         for (String key : mergeBaseKeys) {
 	    String annotation = vertex.getAnnotation(key);
 	    if(annotation != null && annotation.length() > 0) 
