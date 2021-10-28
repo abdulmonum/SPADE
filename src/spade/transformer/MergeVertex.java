@@ -1,7 +1,7 @@
 /*
  --------------------------------------------------------------------------------
  SPADE - Support for Provenance Auditing in Distributed Environments.
- Copyright (C) 2015 SRI International
+ Copyright (C) 2021 SRI International
  This program is free software: you can redistribute it and/or  
  modify it under the terms of the GNU General Public License as  
  published by the Free Software Foundation, either version 3 of the  
@@ -100,7 +100,7 @@ public class MergeVertex extends AbstractTransformer{
 
                 Map<String, String> newVertexAnnotations = v.getCopyOfAnnotations();
                 
-                // for-loop to remove annotations that have differeing value across similar vertices 
+                // for-loop to remove annotations that have differing value across similar vertices 
                 for(Map.Entry<String, String> set : mergedVertexAnnotations.entrySet()){
                     String mergedVertexKey = set.getKey();
                     String mergedVertexValue = set.getValue();
