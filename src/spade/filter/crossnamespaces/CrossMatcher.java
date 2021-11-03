@@ -276,7 +276,7 @@ public class CrossMatcher{
 				completeOtherWriters.add(matchedAndReportOtherWriter);
 			}
 		}
-		filter.outputEvent(eventId,
+		filter.handleCrossNamespaceEvent(eventId,
 				matchedArtifactAnnotations, 
 				completeArtifactAnnotationsSet,
 				completeOtherWriters,

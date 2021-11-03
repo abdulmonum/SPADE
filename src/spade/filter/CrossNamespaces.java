@@ -54,7 +54,7 @@ public class CrossNamespaces extends AbstractFilter{
 
 	@Override
 	public boolean initialize(final String arguments){
-		final String configFilePath = Settings.getDefaultConfigFilePath(this.getClass());
+		final String configFilePath = Settings.getDefaultConfigFilePath(CrossNamespaces.class.getClass());
 		try{
 			final Map<String, String> configMap = HelperFunctions.parseKeyValuePairsFrom(arguments, new String[]{configFilePath});
 
@@ -89,7 +89,7 @@ public class CrossNamespaces extends AbstractFilter{
 		}
 		return true;
 	}
-	
+
 	@Override
 	public void putVertex(final AbstractVertex vertex){
 		putInNextFilter(vertex);
@@ -150,7 +150,7 @@ public class CrossNamespaces extends AbstractFilter{
 		this.outputWriter.write(eventString + "\n");
 	}
 
-	public final void outputEvent(final long eventId, 
+	public void handleCrossNamespaceEvent(final long eventId, 
 			final TreeMap<String, String> matchedArtifactAnnotations,
 			final HashSet<TreeMap<String, String>> completeArtifactAnnotationsSet,
 			final HashSet<TreeMap<String, String>> completeOtherWriters,
