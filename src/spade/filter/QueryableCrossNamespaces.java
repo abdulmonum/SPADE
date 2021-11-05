@@ -34,6 +34,27 @@ import spade.storage.PostgreSQL;
 import spade.utility.HelperFunctions;
 import spade.utility.RemoteSPADEQueryConnection;
 
+/*
+  A class to receive CrossNamespace events (https://github.com/ashish-gehani/SPADE/wiki/Available-filters#crossnamespaces)
+  in real-time.
+  
+  All available information is provided to the function 'handleCrossNamespaceEvent'.
+  
+  In addition, the class provides a way of querying SPADE storages (like from the query client). This can be used
+  to extract more information about CrossNamespaces events. This functionality is provided through the class member
+  'queryClient'.
+  
+  How to use this class:
+  
+  From the SPADE control client, use the command 'add filter QueryableCrossNamespaces position=1'
+  
+  Note that, the CrossNamespaces filter is not required because this class is a child of CrossNamespaces filter i.e.
+  all the functionality of CrossNamespaces is automatically included when QueryableCrossNamespaces filter is added.
+  
+  The config file 'cfg/spade.filter.CrossNamespaces.config' is still valid and in effect when this filter is used.
+  
+  For any configuration specific to this filter, use the file 'cfg/spade.filter.QueryableCrossNamespaces.config'.
+*/
 public class QueryableCrossNamespaces extends CrossNamespaces{
 
 	private static final Logger logger = Logger.getLogger(QueryableCrossNamespaces.class.getName());
