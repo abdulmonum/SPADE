@@ -37,139 +37,142 @@ import spade.core.Settings;
 import spade.filter.crossnamespaces.CrossMatcher;
 import spade.utility.ArgumentFunctions;
 import spade.utility.HelperFunctions;
+import spade.utility.FileUtility;
 
 public class CrossNamespaces extends AbstractFilter{
 
-	private static final Logger logger = Logger.getLogger(CrossNamespaces.class.getName());
-	
-	private static final String
-		keyOutput = "output",
-		keyPretty = "pretty";
+        private static final Logger logger = Logger.getLogger(CrossNamespaces.class.getName());
 
-	private boolean pretty;
-	private String outputPath;
-	private BufferedWriter outputWriter;
+        private static final String
+                keyOutput = "output",
+                keyPretty = "pretty";
 
-	private final CrossMatcher matcher = new CrossMatcher();
+        private boolean pretty;
+        private String outputPath;
+        private BufferedWriter outputWriter;
 
-	@Override
-	public boolean initialize(final String arguments){
-		final String configFilePath = Settings.getDefaultConfigFilePath(CrossNamespaces.class.getClass());
-		try{
-			final Map<String, String> configMap = HelperFunctions.parseKeyValuePairsFrom(arguments, new String[]{configFilePath});
+        private final CrossMatcher matcher = new CrossMatcher();
 
-			outputPath = ArgumentFunctions.mustParseWritableFilePath(keyOutput, configMap);
-			outputWriter = new BufferedWriter(new FileWriter(outputPath));
-			pretty = ArgumentFunctions.mustParseBoolean(keyPretty, configMap);
+        @Override
+        public boolean initialize(final String arguments){
+                final String configFilePath = Settings.getDefaultConfigFilePath(CrossNamespaces.class);
+                //final String configFilePath = "/home/vagrant/SPADE/./cfg/spade.filter.CrossNamespaces.config";
+                try{
 
-			matcher.initialize(this, configMap);
+					final Map<String, String> configMap = HelperFunctions.parseKeyValuePairsFrom(arguments, new String[]{configFilePath});
 
-			logger.log(Level.INFO, "Arguments: "
-					+ "{0}={1}, {2}={3}",
-					new Object[]{
-							keyOutput, outputPath
-							, keyPretty, pretty
-					});
-		}catch(Exception e){
-			logger.log(Level.SEVERE, "Failed to read config file: " + configFilePath, e);
-			return false;
-		}
-		return true;
+					outputPath = ArgumentFunctions.mustParseWritableFilePath(keyOutput, configMap);
+					outputWriter = new BufferedWriter(new FileWriter(outputPath));
+					pretty = ArgumentFunctions.mustParseBoolean(keyPretty, configMap);
+
+					matcher.initialize(this, configMap);
+
+					logger.log(Level.INFO, "Arguments: "
+									+ "{0}={1}, {2}={3}",
+									new Object[]{
+													keyOutput, outputPath
+													, keyPretty, pretty
+									});
+			}catch(Exception e){
+					logger.log(Level.SEVERE, "Failed to read config fileeee: " + configFilePath, e);
+					return false;
+			}
+			return true;
 	}
 	
 	@Override
 	public boolean shutdown(){
-		matcher.shutdown();
-		if(outputWriter != null){
-			try{
-				outputWriter.close();
-			}catch(Exception e){
-				logger.log(Level.WARNING, "Failed to close file. Buffered data at the tail might be lost", e);
+			matcher.shutdown();
+			if(outputWriter != null){
+					try{
+							outputWriter.close();
+					}catch(Exception e){
+							logger.log(Level.WARNING, "Failed to close file. Buffered data at the tail might be lost", e);
+					}
 			}
-		}
-		return true;
+			return true;
 	}
 
 	@Override
 	public void putVertex(final AbstractVertex vertex){
-		putInNextFilter(vertex);
+			putInNextFilter(vertex);
 	}
 
 	@Override
 	public void putEdge(final AbstractEdge edge){
-		putInNextFilter(edge);
-		matcher.check(edge);
+			putInNextFilter(edge);
+			matcher.check(edge);
 	}
 
 	private final JSONObject createJSONObjectFromMap(final Map<String, String> map) throws Exception{
-		final JSONObject object = new JSONObject();
-		for(final String key : map.keySet()){
-			final String value = map.get(key);
-			if(value != null){
-				object.put(key, value);
+			final JSONObject object = new JSONObject();
+			for(final String key : map.keySet()){
+					final String value = map.get(key);
+					if(value != null){
+							object.put(key, value);
+					}
 			}
-		}
-		return object;
+			return object;
 	}
 
 	private final JSONObject createJSONEvent(
-			final long eventId, 
-			final TreeMap<String, String> matchedArtifactAnnotations,
-			final HashSet<TreeMap<String, String>> completeArtifactAnnotationsSet,
-			final HashSet<TreeMap<String, String>> completeOtherWriters,
-			final AbstractVertex readerProcessVertex,
-			final AbstractEdge readEdge) throws Exception{
-		final JSONObject eventObject = new JSONObject();
-		eventObject.put("cross-namespace-event-id", String.valueOf(eventId));
-		eventObject.put("read-edge", createJSONObjectFromMap(readEdge.getCopyOfAnnotations()));
-		eventObject.put("artifact", createJSONObjectFromMap(matchedArtifactAnnotations));
+					final long eventId, 
+					final TreeMap<String, String> matchedArtifactAnnotations,
+					final HashSet<TreeMap<String, String>> completeArtifactAnnotationsSet,
+					final HashSet<TreeMap<String, String>> completeOtherWriters,
+					final AbstractVertex readerProcessVertex,
+					final AbstractEdge readEdge) throws Exception{
+			final JSONObject eventObject = new JSONObject();
+			eventObject.put("cross-namespace-event-id", String.valueOf(eventId));
+			eventObject.put("read-edge", createJSONObjectFromMap(readEdge.getCopyOfAnnotations()));
+			eventObject.put("artifact", createJSONObjectFromMap(matchedArtifactAnnotations));
 
-		final JSONArray artifactsArray = new JSONArray();
-		for(final TreeMap<String, String> tmp : completeArtifactAnnotationsSet){
-			artifactsArray.put(createJSONObjectFromMap(tmp));
-		}
-		eventObject.put("artifacts", artifactsArray);
+			final JSONArray artifactsArray = new JSONArray();
+			for(final TreeMap<String, String> tmp : completeArtifactAnnotationsSet){
+					artifactsArray.put(createJSONObjectFromMap(tmp));
+			}
+			eventObject.put("artifacts", artifactsArray);
 
-		eventObject.put("reader", createJSONObjectFromMap(readerProcessVertex.getCopyOfAnnotations()));
-		
-		final JSONArray writerArray = new JSONArray();
-		for(final TreeMap<String, String> tmp : completeOtherWriters){
-			writerArray.put(createJSONObjectFromMap(tmp));
-		}
-		eventObject.put("writers", writerArray);
-		return eventObject;
+			eventObject.put("reader", createJSONObjectFromMap(readerProcessVertex.getCopyOfAnnotations()));
+			
+			final JSONArray writerArray = new JSONArray();
+			for(final TreeMap<String, String> tmp : completeOtherWriters){
+					writerArray.put(createJSONObjectFromMap(tmp));
+			}
+			eventObject.put("writers", writerArray);
+			return eventObject;
 	}
 
 	private final void writeJSONEvent(final JSONObject eventObject) throws Exception{
-		final String eventString;
-		if(pretty){
-			eventString = eventObject.toString(2);
-		}else{
-			eventString = eventObject.toString();
-		}
-		this.outputWriter.write(eventString + "\n");
+			final String eventString;
+			if(pretty){
+					eventString = eventObject.toString(2);
+			}else{
+					eventString = eventObject.toString();
+			}
+			this.outputWriter.write(eventString + "\n");
 	}
 
 	public void handleCrossNamespaceEvent(final long eventId, 
-			final TreeMap<String, String> matchedArtifactAnnotations,
-			final HashSet<TreeMap<String, String>> completeArtifactAnnotationsSet,
-			final HashSet<TreeMap<String, String>> completeOtherWriters,
-			final AbstractVertex readerProcessVertex,
-			final AbstractEdge readEdge){
-		final JSONObject eventObject;
-		try{
-			eventObject = createJSONEvent(eventId, matchedArtifactAnnotations, 
-					completeArtifactAnnotationsSet, completeOtherWriters, readerProcessVertex, readEdge);
-		}catch(Exception e){
-			logger.log(Level.WARNING, "Failed to create event as JSON object", e);
-			return;
-		}
-		try{
-			writeJSONEvent(eventObject);
-		}catch(Exception e){
-			logger.log(Level.WARNING, "Failed to write event", e);
-			return;
-		}
+					final TreeMap<String, String> matchedArtifactAnnotations,
+					final HashSet<TreeMap<String, String>> completeArtifactAnnotationsSet,
+					final HashSet<TreeMap<String, String>> completeOtherWriters,
+					final AbstractVertex readerProcessVertex,
+					final AbstractEdge readEdge){
+			final JSONObject eventObject;
+			try{
+					eventObject = createJSONEvent(eventId, matchedArtifactAnnotations, 
+									completeArtifactAnnotationsSet, completeOtherWriters, readerProcessVertex, readEdge);
+			}catch(Exception e){
+					logger.log(Level.WARNING, "Failed to create event as JSON object", e);
+					return;
+			}
+			try{
+					writeJSONEvent(eventObject);
+			}catch(Exception e){
+					logger.log(Level.WARNING, "Failed to write event", e);
+					return;
+			}
 	}
 
 }
