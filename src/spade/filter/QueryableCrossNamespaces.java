@@ -204,7 +204,7 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                         final spade.core.Graph graph = queryClient.exportGraph(symbol, force, verify);
 
                         // Exporting graph to a dot file
-                        String completeFilePath = ABSOLUTE_EXPORT_PATH + graphName;
+                        String completeFilePath = ABSOLUTE_EXPORT_PATH + File.separator + graphName;
                         Graph.exportGraphToFile(SaveGraph.Format.kDot, completeFilePath, graph);
 
                         /*
