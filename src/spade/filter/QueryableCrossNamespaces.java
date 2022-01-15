@@ -60,6 +60,7 @@ import spade.query.quickgrail.instruction.SaveGraph;
 
   The config file 'cfg/spade.filter.CrossNamespaces.config' is still valid and in effect when this filter is used.
 
+
   For any configuration specific to this filter, use the file 'cfg/spade.filter.QueryableCrossNamespaces.config'.
 */
 public class QueryableCrossNamespaces extends CrossNamespaces{
@@ -217,4 +218,5 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                         logger.log(Level.WARNING, "Error in querying", e);
                 }
         }
+
 }

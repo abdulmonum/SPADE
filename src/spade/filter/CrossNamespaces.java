@@ -78,6 +78,7 @@ public class CrossNamespaces extends AbstractFilter{
 					return false;
 			}
 			return true;
+
 	}
 	
 	@Override
@@ -173,6 +174,7 @@ public class CrossNamespaces extends AbstractFilter{
 					logger.log(Level.WARNING, "Failed to write event", e);
 					return;
 			}
+
 	}
 
 }
