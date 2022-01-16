@@ -198,10 +198,14 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                         // getting crossnamepace entities
                         queryClient.executeQuery("$crossnamespace_entities = $base.getVertex(%entity_constraint)");
 
-			// --- reader constraint ---
-			makeReaderEntitiesCamflow(readEdge);
+			// --- crossnamespace readers ---
+			makeReaderEntitiesCamflow(readEdge, graphName);
 
-			
+                        // --- crossnamespace writers ---
+                        makeWriterEntitiesCamflow(completeOtherWriters);
+                        
+                        // --- transformed graph generation ---
+                        remainingQueriesCamflow();
 
                         /*
                          * Export a graph
@@ -210,7 +214,7 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                          *
                          * This is the same Graph class that is seen in Transformers
                          */
-                        final String symbol = "$crossnamespace_entities"; // Name of the graph symbol to export
+                        final String symbol = "$transformed_graph"; // Name of the graph symbol to export
                         final boolean force = true; // Export even if graph is big
                         final boolean verify = false; // Do not verify the query response
                         final spade.core.Graph graph = queryClient.exportGraph(symbol, force, verify);
@@ -231,7 +235,7 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                 }
         }
 
-	public void makeReaderEntitiesCamflow(AbstractEdge readEdge){
+	public void makeReaderEntitiesCamflow(AbstractEdge readEdge, String graphName){
 		try{
 			// --- reader constraint ---
                         // adding artifact and reader to map
@@ -243,7 +247,7 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                                 readers.add(readEdge.getAnnotation("id"));
                                 ARTIFACT_READERS_MAP.put(graphName, readers);
                         } else{
-                                readers.add(readEdge.getAnnotation("id");
+                                readers.add(readEdge.getAnnotation("id"));
                                 ARTIFACT_READERS_MAP.put(graphName, readers);
                         }
 
@@ -257,11 +261,11 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 
                         // creating reader constriants, splitting into multiple constriants
                         for(int i = 0; i < readers.size(); i++){
-                                String currentConstraint = readerConstraintList.get(total_reader_constraints)
+                                String currentConstraint = readerConstraintList.get(total_reader_constraints);
                                 currentConstraint += " \"id\" == '" + readers.get(i) + "' and";
                                 readerConstraintList.set(total_reader_constraints, currentConstraint);
 
-                                if((i != 0) and (i%6 == 0)){
+                                if((i != 0) && (i%6 == 0)){
                                         currentConstraint = readerConstraintList.get(total_reader_constraints);
                                         currentConstraint = currentConstraint.substring(0, currentConstraint.length() - 4);
                                         readerConstraintList.set(total_reader_constraints, currentConstraint);
@@ -282,7 +286,7 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 			
 			// executing readers constraints
                         String chainedReaderConstraint = "";
-                        for(int i = 0, i < total_reader_constraints, i++){
+                        for(int i = 0; i < total_reader_constraints; i++){
                                 queryClient.executeQuery(readerConstraintList.get(i));
                                 chainedReaderConstraint += "%reader_constraint" + String.valueOf(i) + " or ";
                         }
@@ -296,6 +300,103 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                 }
 		
 	}
+
+
+        public void makeWriterEntitiesCamflow(HashSet<TreeMap<String, String>> completeOtherWriters){
+                // --- writer constraint ---
+                // getting all the writer ids
+                
+                int total_writer_constraints = 0;
+
+                String writerConstraint = "%writer_constraint" + String.valueOf(total_writer_constraints) + " =";
+                ArrayList<String> writerConstraintList = new ArrayList<String>();
+                writerConstraintList.add(writerConstraint);
+
+                int i = 0;
+                for(final TreeMap<String, String> writer : completeOtherWriters){
+			String currentConstraint = writerConstraintList.get(total_writer_constraints);
+                        currentConstraint += " \"id\" == '" + writer.get("id") + "' and";
+                        writerConstraintList.set(total_writer_constraints, currentConstraint);
+
+                        if((i != 0) && (i%6 == 0)){
+                                currentConstraint = writerConstraintList.get(total_writer_constraints);
+                                currentConstraint = currentConstraint.substring(0, currentConstraint.length() - 4);
+                                writerConstraintList.set(total_writer_constraints, currentConstraint);
+
+                                total_writer_constraints++;
+
+                                writerConstraint = "%writer_constraint" + String.valueOf(total_writer_constraints) + " =";
+                                writerConstraintList.add(writerConstraint);
+                        }
+                        i++;
+		}
+
+                String lastConstraint = writerConstraintList.get(total_writer_constraints);
+                if(lastConstraint.substring(lastConstraint.length() - 3).equals("and")){
+                        String currentConstraint = writerConstraintList.get(total_writer_constraints);
+                        currentConstraint = currentConstraint.substring(0, currentConstraint.length() - 4);
+                        writerConstraintList.set(total_writer_constraints, currentConstraint);
+                }
+
+                // executing readers constraints
+                String chainedWriterConstraint = "";
+                for(int i = 0; i < total_writer_constraints; i++){
+                        queryClient.executeQuery(writerConstraintList.get(i));
+                        chainedWriterConstraint += "%writer_constraint" + String.valueOf(i) + " or ";
+                }
+                chainedWriterConstraint = chainedWriterConstraint.substring(0, chainedWriterConstraint.length() - 4);
+
+                // getting reader entities
+                queryClient.executeQuery("$crossnamespace_writers = $base.getVertex(" + chainedWriterConstraint + ")");
+
+        }
+
+        public void remainingQueriesCamflow(){
+                // Group all process memory vertices which contain the namespace identifiers.
+                queryClient.executeQuery("$memorys = $base.getVertex(object_type = 'process_memory')");
+                // Group all task vertices which contain the process identifiers. Tasks are connected to process memory vertices.
+                queryClient.executeQuery("$tasks = $base.getVertex(object_type = 'task')");
+                // Group all files vertices which represent an inode. Tasks are connected to files by 'relation_type'='read' or 'relation_type'='write'.
+                queryClient.executeQuery("$files = $base.getVertex(object_type = 'file')");
+                // Group all path vertices which contain the path of an inode in the filesystem. Files are connected to paths.
+                queryClient.executeQuery("$paths = $base.getVertex(object_type = 'path')");
+                // Group all argv vertices which contain the argument passed to a process.
+                queryClient.executeQuery("$argvs = $base.getVertex(object_type = 'argv')");
+
+
+                // Construct crossnamespace path
+                queryClient.executeQuery("$connected_entities = $base.getPath($crossnamespace_entities, $crossnamespace_entities, 1)");
+                queryClient.executeQuery("$crossnamespace_flow_0 = $base.getPath($crossnamespace_readers, $crossnamespace_entities, 1)");
+                queryClient.executeQuery("$crossnamespace_flow_1 = $base.getPath($crossnamespace_entities, $crossnamespace_writers, 1)");
+
+                queryClient.executeQuery("$crossnamespace_path_vertices = $base.getPath($crossnamespace_entities, $paths, 1) & $paths");
+                queryClient.executeQuery("$crossnamespace_path = $base.getPath($connected_entities, $crossnamespace_path_vertices, 1)");
+
+
+                // Adding process_memory vertices to writing and reading tasks.
+                queryClient.executeQuery("$writing_process_memory = $base.getLineage($crossnamespace_writers, 1, 'a') & $memorys");
+                queryClient.executeQuery("$reading_process_memory = $base.getLineage($crossnamespace_readers, 1, 'd') & $memorys");
+                queryClient.executeQuery("$writing_task_to_writing_memory = $base.getPath($crossnamespace_writers, $writing_process_memory, 1)");
+                queryClient.executeQuery("$reading_memory_to_reading_task = $base.getPath($reading_process_memory, $crossnamespace_readers, 1)");
+
+                queryClient.executeQuery("$writing_process_memory_all_versions = $memorys.getMatch($writing_process_memory, 'object_id', 'cf:machine_id', 'boot_id')");
+                queryClient.executeQuery("$reading_process_memory_all_versions = $memorys.getMatch($reading_process_memory, 'object_id', 'cf:machine_id', 'boot_id')");
+
+                queryClient.executeQuery("$writing_process_memory_path = $base.getPath($writing_process_memory_all_versions, $writing_process_memory_all_versions, 1, $paths, 1)");
+                queryClient.executeQuery("$reading_process_memory_path = $base.getPath($reading_process_memory_all_versions, $reading_process_memory_all_versions, 1, $paths, 1)");
+
+                // Adding argv vertices to process_memory vertices.
+                
+                queryClient.executeQuery("$writing_process_to_argv = $base.getPath($writing_process_memory_all_versions, $argvs, 1)");
+                queryClient.executeQuery("$reading_process_to_argv = $base.getPath($reading_process_memory_all_versions, $argvs, 1)");
+
+                // Cross-namespace provenance subgraph construction.
+                queryClient.executeQuery("$subgraph = $crossnamespace_flow_0 + $crossnamespace_flow_1 + $connected_entities + $crossnamespace_path + $writing_task_to_writing_memory + $reading_memory_to_reading_task + $writing_process_memory_path + $reading_process_memory_path + $writing_process_to_argv + $reading_process_to_argv");
+                queryClient.executeQuery("$subgraph = $subgraph.collapseEdge('relation_type')");
+
+                queryClient.executeQuery("$transformed_subgraph = $subgraph.transform(MergeVertex,\"boot_id,cf:machine_id,object_id,pidns,ipcns,mntns,netns,cgroupns,utsns\")");
+                queryClient.executeQuery("$transformed_subgraph = $transformed_subgraph.collapseEdge('relation_type')");
+        }
 
 }
 
