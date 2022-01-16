@@ -20,11 +20,14 @@
 package spade.filter;
 
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.ArrayList;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import java.io.File;
 
 import spade.core.AbstractEdge;
 import spade.core.AbstractVertex;
@@ -75,6 +78,8 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 	private static String ABSOLUTE_EXPORT_PATH = null;
 
 	private static boolean CAMFLOW_TRUE_AUDIT_FALSE;
+	
+	private HashMap<String,ArrayList<String>> ARTIFACT_READERS_MAP;
 
 	private RemoteSPADEQueryConnection queryClient;
 
@@ -112,7 +117,9 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 							logger.log(Level.INFO, "invalid reporter: {0}", configMap.get(keyReporter));
 							throw new Exception("reporter needs to be either camflow or audit.");
 					}
-
+					
+					// initializing ARTIFACT_READERS_MAP
+					ARTIFACT_READERS_MAP = new HashMap<String,ArrayList<String>>();
 
 
                 }catch(Exception e){
@@ -178,7 +185,7 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                                 String key = entry.getKey();
                                 String value = entry.getValue();
 
-                                entityConstraint += " \"" + key + "\" == " + "'" + value + "'" + " and";
+                                entityConstraint += " \"" + key + "\" == '" + value + "' and";
                                 graphName += value + "_";
                         }
                         entityConstraint = entityConstraint.substring(0, entityConstraint.length() - 4);
@@ -190,6 +197,11 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 
                         // getting crossnamepace entities
                         queryClient.executeQuery("$crossnamespace_entities = $base.getVertex(%entity_constraint)");
+
+			// --- reader constraint ---
+			makeReaderEntitiesCamflow(readEdge);
+
+			
 
                         /*
                          * Export a graph
@@ -219,4 +231,73 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                 }
         }
 
+	public void makeReaderEntitiesCamflow(AbstractEdge readEdge){
+		try{
+			// --- reader constraint ---
+                        // adding artifact and reader to map
+
+                        ArrayList<String> readers = ARTIFACT_READERS_MAP.get(graphName);
+
+                        if(readers == null){
+                                readers = new ArrayList<String>();
+                                readers.add(readEdge.getAnnotation("id"));
+                                ARTIFACT_READERS_MAP.put(graphName, readers);
+                        } else{
+                                readers.add(readEdge.getAnnotation("id");
+                                ARTIFACT_READERS_MAP.put(graphName, readers);
+                        }
+
+
+                        // creating reader ids
+                        int total_reader_constraints = 0;
+
+                        String readerConstraint = "%reader_constraint" + String.valueOf(total_reader_constraints) + " =";
+                        ArrayList<String> readerConstraintList = new ArrayList<String>();
+                        readerConstraintList.add(readerConstraint);
+
+                        // creating reader constriants, splitting into multiple constriants
+                        for(int i = 0; i < readers.size(); i++){
+                                String currentConstraint = readerConstraintList.get(total_reader_constraints)
+                                currentConstraint += " \"id\" == '" + readers.get(i) + "' and";
+                                readerConstraintList.set(total_reader_constraints, currentConstraint);
+
+                                if((i != 0) and (i%6 == 0)){
+                                        currentConstraint = readerConstraintList.get(total_reader_constraints);
+                                        currentConstraint = currentConstraint.substring(0, currentConstraint.length() - 4);
+                                        readerConstraintList.set(total_reader_constraints, currentConstraint);
+
+                                        total_reader_constraints++;
+
+                                        readerConstraint = "%reader_constraint" + String.valueOf(total_reader_constraints) + " =";
+                                        readerConstraintList.add(readerConstraint);
+                                }
+                        }
+
+                        String lastConstraint = readerConstraintList.get(total_reader_constraints);
+                        if(lastConstraint.substring(lastConstraint.length() - 3).equals("and")){
+                                String currentConstraint = readerConstraintList.get(total_reader_constraints);
+                                currentConstraint = currentConstraint.substring(0, currentConstraint.length() - 4);
+                                readerConstraintList.set(total_reader_constraints, currentConstraint);
+                        }
+			
+			// executing readers constraints
+                        String chainedReaderConstraint = "";
+                        for(int i = 0, i < total_reader_constraints, i++){
+                                queryClient.executeQuery(readerConstraintList.get(i));
+                                chainedReaderConstraint += "%reader_constraint" + String.valueOf(i) + " or ";
+                        }
+                        chainedReaderConstraint = chainedReaderConstraint.substring(0, chainedReaderConstraint.length() - 4);
+
+                        // getting reader entities
+                        queryClient.executeQuery("$crossnamespace_readers = $base.getVertex(" + chainedReaderConstraint + ")");
+
+		}catch(Exception e){
+                        logger.log(Level.WARNING, "Error in querying", e);
+                }
+		
+	}
+
 }
+
+
+
