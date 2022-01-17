@@ -81,6 +81,8 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 	
 	private HashMap<String,ArrayList<String>> ARTIFACT_READERS_MAP;
 
+        private HashMap<String,ArrayList<String>> ENTITY_TO_READER_WRITER;
+
 	private RemoteSPADEQueryConnection queryClient;
 
 	@Override
@@ -121,6 +123,9 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 					// initializing ARTIFACT_READERS_MAP
 					ARTIFACT_READERS_MAP = new HashMap<String,ArrayList<String>>();
 
+                                        // initializing ENTITY_TO_READER_WRITER
+                                        ENTITY_TO_READER_WRITER = new HashMap<String,ArrayList<String>>();
+
 
                 }catch(Exception e){
                         logger.log(Level.SEVERE, "Failed to initialize", e);
@@ -134,6 +139,8 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                 super.shutdown();
                 // Cleanup (if required) TODO
                 try{
+                        // --- transformed graph generation ---
+                        remainingQueriesCamflow();
                         queryClient.close();
                 }catch(Exception e){
                         logger.log(Level.WARNING, "Failed to close remote query connection", e);
@@ -174,7 +181,7 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 
                         // ------ CAMFLOW QUERY ------
 
-                        queryClient.executeQuery("reset workspace");
+                        // queryClient.executeQuery("reset workspace");
 
                         // --- entity constraint ---
                         // extracting matched annotations and making their constraints
@@ -189,23 +196,34 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                                 graphName += value + "_";
                         }
                         entityConstraint = entityConstraint.substring(0, entityConstraint.length() - 4);
+                        String templateName = graphName.replaceAll("[^a-zA-Z0-9]", "");
+
                         graphName += "graph.dot";
+
 
                         queryClient.executeQuery("%entity_constraint =" + entityConstraint);
 
                         logger.log(Level.INFO, "Entity Constraint: {0}, Event id: {1}", new Object[]{entityConstraint, eventId});
 
                         // getting crossnamepace entities
-                        queryClient.executeQuery("$crossnamespace_entities = $base.getVertex(%entity_constraint)");
+                        queryClient.executeQuery("$crossnamespace_entities"+ templateName +" = $base.getVertex(%entity_constraint)");
 
 			// --- crossnamespace readers ---
-			makeReaderEntitiesCamflow(readEdge, graphName);
+			ArrayList<String> readerConstraintList = getReaderConstraintList(readEdge, graphName);
+                        String readerCrossnamespaceVariable = makeReaderEntitiesCamflow(readerConstraintList, templateName);
 
                         // --- crossnamespace writers ---
-                        makeWriterEntitiesCamflow(completeOtherWriters);
+                        ArrayList<String> writerConstraintList = getWriterConstraintList(completeOtherWriters);
+                        String writerCrossnamespaceVariable = makeWriterEntitiesCamflow(writerConstraintList, templateName);
+
+                        ArrayList<String> readerAndWriter = new ArrayList<String>();
+                        readerAndWriter.add(readerCrossnamespaceVariable);
+                        readerAndWriter.add(writerCrossnamespaceVariable);
+
+                        ENTITY_TO_READER_WRITER.put("$crossnamespace_entities" + templateName, readerAndWriter);
+
                         
-                        // --- transformed graph generation ---
-                        remainingQueriesCamflow();
+                        
 
                         /*
                          * Export a graph
@@ -235,88 +253,122 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                 }
         }
 
-	public void makeReaderEntitiesCamflow(AbstractEdge readEdge, String graphName){
+	public String makeReaderEntitiesCamflow(ArrayList<String> readerConstraintList, String templateName){
 		try{
-			// --- reader constraint ---
-                        // adding artifact and reader to map
-
-                        ArrayList<String> readers = ARTIFACT_READERS_MAP.get(graphName);
-
-                        if(readers == null){
-                                readers = new ArrayList<String>();
-                                readers.add(readEdge.getAnnotation("id"));
-                                ARTIFACT_READERS_MAP.put(graphName, readers);
-                        } else{
-                                readers.add(readEdge.getAnnotation("id"));
-                                ARTIFACT_READERS_MAP.put(graphName, readers);
-                        }
-
-
-                        // creating reader ids
-                        int total_reader_constraints = 0;
-
-                        String readerConstraint = "%reader_constraint" + String.valueOf(total_reader_constraints) + " =";
-                        ArrayList<String> readerConstraintList = new ArrayList<String>();
-                        readerConstraintList.add(readerConstraint);
-
-                        // creating reader constriants, splitting into multiple constriants
-                        for(int i = 0; i < readers.size(); i++){
-                                String currentConstraint = readerConstraintList.get(total_reader_constraints);
-                                currentConstraint += " \"id\" == '" + readers.get(i) + "' and";
-                                readerConstraintList.set(total_reader_constraints, currentConstraint);
-
-                                if((i != 0) && (i%6 == 0)){
-                                        currentConstraint = readerConstraintList.get(total_reader_constraints);
-                                        currentConstraint = currentConstraint.substring(0, currentConstraint.length() - 4);
-                                        readerConstraintList.set(total_reader_constraints, currentConstraint);
-
-                                        total_reader_constraints++;
-					
-					// if(!((i+1) < readers.size())){
-						readerConstraint = "%reader_constraint" + String.valueOf(total_reader_constraints) + " =";
-                                        	readerConstraintList.add(readerConstraint);
-					// }
-                                }
-                        }
-
-			if(readerConstraintList.get(total_reader_constraints).substring(readerConstraintList.get(total_reader_constraints).length() - 2).equals(" =")){
-                        	readerConstraintList.remove(total_reader_constraints);
-                        	total_reader_constraints--;
-
-                	}	
-
-                        String lastConstraint = readerConstraintList.get(total_reader_constraints);
-                        if(lastConstraint.substring(lastConstraint.length() - 3).equals("and")){
-                                String currentConstraint = readerConstraintList.get(total_reader_constraints);
-                                currentConstraint = currentConstraint.substring(0, currentConstraint.length() - 4);
-                                readerConstraintList.set(total_reader_constraints, currentConstraint);
-                        }
-			
-			logger.log(Level.INFO, "Reader constraint list: {0}", readerConstraintList);
-
-			// executing readers constraints
+                        // executing readers constraints
                         String chainedReaderConstraint = "";
+                        int total_reader_constraints = readerConstraintList.size();
                         for(int i = 0; i <= total_reader_constraints; i++){
                                 queryClient.executeQuery(readerConstraintList.get(i));
                                 chainedReaderConstraint += "%reader_constraint" + String.valueOf(i) + " or ";
                         }
-			logger.log(Level.INFO, "Chained Reader Constraint: {0}", chainedReaderConstraint);
-			if(chainedReaderConstraint.length() > 0){
-				chainedReaderConstraint = chainedReaderConstraint.substring(0, chainedReaderConstraint.length() - 4);
-			}
-			
-			
+                        logger.log(Level.INFO, "Chained Reader Constraint: {0}", chainedReaderConstraint);
+                        if(chainedReaderConstraint.length() > 0){
+                                chainedReaderConstraint = chainedReaderConstraint.substring(0, chainedReaderConstraint.length() - 4);
+                        }
+
                         // getting reader entities
-                        queryClient.executeQuery("$crossnamespace_readers = $base.getVertex(" + chainedReaderConstraint + ")");
+                        queryClient.executeQuery("$crossnamespace_readers" + templateName + " = $base.getVertex(" + chainedReaderConstraint + ")");
 
 		}catch(Exception e){
                         logger.log(Level.WARNING, "Error in querying", e);
                 }
+
+                return "$crossnamespace_readers" + templateName;
 		
 	}
 
+        public ArrayList<String> getReaderConstraintList(AbstractEdge readEdge, String graphName){
+                // --- reader constraint ---
+                // adding artifact and reader to map
 
-        public void makeWriterEntitiesCamflow(HashSet<TreeMap<String, String>> completeOtherWriters){
+                ArrayList<String> readers = ARTIFACT_READERS_MAP.get(graphName);
+
+                if(readers == null){
+                        readers = new ArrayList<String>();
+                        readers.add(readEdge.getAnnotation("id"));
+                        ARTIFACT_READERS_MAP.put(graphName, readers);
+                } else{
+                        readers.add(readEdge.getAnnotation("id"));
+                        ARTIFACT_READERS_MAP.put(graphName, readers);
+                }
+
+
+                // creating reader ids
+                int total_reader_constraints = 0;
+
+                String readerConstraint = "%reader_constraint" + String.valueOf(total_reader_constraints) + " =";
+                ArrayList<String> readerConstraintList = new ArrayList<String>();
+                readerConstraintList.add(readerConstraint);
+
+                // creating reader constriants, splitting into multiple constriants
+                for(int i = 0; i < readers.size(); i++){
+                        String currentConstraint = readerConstraintList.get(total_reader_constraints);
+                        currentConstraint += " \"id\" == '" + readers.get(i) + "' and";
+                        readerConstraintList.set(total_reader_constraints, currentConstraint);
+
+                        if((i != 0) && (i%6 == 0)){
+                                currentConstraint = readerConstraintList.get(total_reader_constraints);
+                                currentConstraint = currentConstraint.substring(0, currentConstraint.length() - 4);
+                                readerConstraintList.set(total_reader_constraints, currentConstraint);
+
+                                total_reader_constraints++;
+                                
+                                readerConstraint = "%reader_constraint" + String.valueOf(total_reader_constraints) + " =";
+                                readerConstraintList.add(readerConstraint);
+                        }
+                }
+
+                if(readerConstraintList.get(total_reader_constraints).substring(readerConstraintList.get(total_reader_constraints).length() - 2).equals(" =")){
+                        readerConstraintList.remove(total_reader_constraints);
+                        total_reader_constraints--;
+
+                }	
+
+                String lastConstraint = readerConstraintList.get(total_reader_constraints);
+                if(lastConstraint.substring(lastConstraint.length() - 3).equals("and")){
+                        String currentConstraint = readerConstraintList.get(total_reader_constraints);
+                        currentConstraint = currentConstraint.substring(0, currentConstraint.length() - 4);
+                        readerConstraintList.set(total_reader_constraints, currentConstraint);
+                }
+                
+                logger.log(Level.INFO, "Reader constraint list: {0}", readerConstraintList);
+
+                
+
+                return readerConstraintList;
+                        
+        }
+
+
+        public String makeWriterEntitiesCamflow(ArrayList<String> writerConstraintList, String templateName){
+
+                try{
+                        // executing readers constraints
+                        String chainedWriterConstraint = "";
+                        int total_writer_constraints = writerConstraintList.size();
+                        for(int i = 0; i <= total_writer_constraints; i++){
+                                queryClient.executeQuery(writerConstraintList.get(i));
+                                chainedWriterConstraint += "%writer_constraint" + String.valueOf(i) + " or ";
+                        }
+                        if(chainedWriterConstraint.length() > 0){
+                                chainedWriterConstraint = chainedWriterConstraint.substring(0, chainedWriterConstraint.length() - 4);
+                        }
+
+                        logger.log(Level.INFO, "Chained writer constraint: {0}", chainedWriterConstraint);
+
+                        // getting reader entities
+                        queryClient.executeQuery("$crossnamespace_writers"+ templateName +" = $base.getVertex(" + chainedWriterConstraint + ")");
+                
+                }catch(Exception e){
+                        logger.log(Level.WARNING, "Error in querying", e);
+                }
+
+                return "$crossnamespace_writers" + templateName;
+
+        }
+
+        public ArrayList<String> getWriterConstraintList(HashSet<TreeMap<String, String>> completeOtherWriters){
                 // --- writer constraint ---
                 // getting all the writer ids
                 
@@ -358,69 +410,67 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                         currentConstraint = currentConstraint.substring(0, currentConstraint.length() - 4);
                         writerConstraintList.set(total_writer_constraints, currentConstraint);
                 }
-
-                // executing readers constraints
-                String chainedWriterConstraint = "";
-                for(int i = 0; i <= total_writer_constraints; i++){
-                        queryClient.executeQuery(writerConstraintList.get(i));
-                        chainedWriterConstraint += "%writer_constraint" + String.valueOf(i) + " or ";
-                }
-		if(chainedWriterConstraint.length() > 0){
-			chainedWriterConstraint = chainedWriterConstraint.substring(0, chainedWriterConstraint.length() - 4);
-		}
-
-		logger.log(Level.INFO, "Chained writer constraint: {0}", chainedWriterConstraint);
-
-                // getting reader entities
-                queryClient.executeQuery("$crossnamespace_writers = $base.getVertex(" + chainedWriterConstraint + ")");
-
+                
+                return writerConstraintList;
         }
 
         public void remainingQueriesCamflow(){
-                // Group all process memory vertices which contain the namespace identifiers.
-                queryClient.executeQuery("$memorys = $base.getVertex(object_type = 'process_memory')");
-                // Group all task vertices which contain the process identifiers. Tasks are connected to process memory vertices.
-                queryClient.executeQuery("$tasks = $base.getVertex(object_type = 'task')");
-                // Group all files vertices which represent an inode. Tasks are connected to files by 'relation_type'='read' or 'relation_type'='write'.
-                queryClient.executeQuery("$files = $base.getVertex(object_type = 'file')");
-                // Group all path vertices which contain the path of an inode in the filesystem. Files are connected to paths.
-                queryClient.executeQuery("$paths = $base.getVertex(object_type = 'path')");
-                // Group all argv vertices which contain the argument passed to a process.
-                queryClient.executeQuery("$argvs = $base.getVertex(object_type = 'argv')");
+
+                for (Map.Entry<String,ArrayList<String>> mapElement : ENTITY_TO_READER_WRITER.entrySet()){
+                        String crossnamespaceEntityVariable = mapElement.getKey();
+                        ArrayList<String> readerAndWriter = mapElement.getValue();
+
+                        String crossnamespaceReaderVariable = readerAndWriter.get(0);
+                        String crossnamespaceWriterVariable = readerAndWriter.get(1);
+
+                        // Group all process memory vertices which contain the namespace identifiers.
+                        queryClient.executeQuery("$memorys = $base.getVertex(object_type = 'process_memory')");
+                        // Group all task vertices which contain the process identifiers. Tasks are connected to process memory vertices.
+                        queryClient.executeQuery("$tasks = $base.getVertex(object_type = 'task')");
+                        // Group all files vertices which represent an inode. Tasks are connected to files by 'relation_type'='read' or 'relation_type'='write'.
+                        queryClient.executeQuery("$files = $base.getVertex(object_type = 'file')");
+                        // Group all path vertices which contain the path of an inode in the filesystem. Files are connected to paths.
+                        queryClient.executeQuery("$paths = $base.getVertex(object_type = 'path')");
+                        // Group all argv vertices which contain the argument passed to a process.
+                        queryClient.executeQuery("$argvs = $base.getVertex(object_type = 'argv')");
 
 
-                // Construct crossnamespace path
-                queryClient.executeQuery("$connected_entities = $base.getPath($crossnamespace_entities, $crossnamespace_entities, 1)");
-                queryClient.executeQuery("$crossnamespace_flow_0 = $base.getPath($crossnamespace_readers, $crossnamespace_entities, 1)");
-                queryClient.executeQuery("$crossnamespace_flow_1 = $base.getPath($crossnamespace_entities, $crossnamespace_writers, 1)");
+                        // Construct crossnamespace path
+                        queryClient.executeQuery("$connected_entities = $base.getPath("+ crossnamespaceEntityVariable +", "+ crossnamespaceEntityVariable +", 1)");
+                        queryClient.executeQuery("$crossnamespace_flow_0 = $base.getPath(" + crossnamespaceReaderVariable + ", " + crossnamespaceEntityVariable + ", 1)");
+                        queryClient.executeQuery("$crossnamespace_flow_1 = $base.getPath(" + crossnamespaceEntityVariable + ", " + crossnamespaceWriterVariable + ", 1)");
 
-                queryClient.executeQuery("$crossnamespace_path_vertices = $base.getPath($crossnamespace_entities, $paths, 1) & $paths");
-                queryClient.executeQuery("$crossnamespace_path = $base.getPath($connected_entities, $crossnamespace_path_vertices, 1)");
+                        queryClient.executeQuery("$crossnamespace_path_vertices = $base.getPath(" + crossnamespaceEntityVariable + ", $paths, 1) & $paths");
+                        queryClient.executeQuery("$crossnamespace_path = $base.getPath($connected_entities, $crossnamespace_path_vertices, 1)");
 
 
-                // Adding process_memory vertices to writing and reading tasks.
-                queryClient.executeQuery("$writing_process_memory = $base.getLineage($crossnamespace_writers, 1, 'a') & $memorys");
-                queryClient.executeQuery("$reading_process_memory = $base.getLineage($crossnamespace_readers, 1, 'd') & $memorys");
-                queryClient.executeQuery("$writing_task_to_writing_memory = $base.getPath($crossnamespace_writers, $writing_process_memory, 1)");
-                queryClient.executeQuery("$reading_memory_to_reading_task = $base.getPath($reading_process_memory, $crossnamespace_readers, 1)");
+                        // Adding process_memory vertices to writing and reading tasks.
+                        queryClient.executeQuery("$writing_process_memory = $base.getLineage(" + crossnamespaceWriterVariable + ", 1, 'a') & $memorys");
+                        queryClient.executeQuery("$reading_process_memory = $base.getLineage(" + crossnamespaceReaderVariable + ", 1, 'd') & $memorys");
+                        queryClient.executeQuery("$writing_task_to_writing_memory = $base.getPath(" + crossnamespaceWriterVariable + ", $writing_process_memory, 1)");
+                        queryClient.executeQuery("$reading_memory_to_reading_task = $base.getPath($reading_process_memory, " + crossnamespaceReaderVariable + ", 1)");
 
-                queryClient.executeQuery("$writing_process_memory_all_versions = $memorys.getMatch($writing_process_memory, 'object_id', 'cf:machine_id', 'boot_id')");
-                queryClient.executeQuery("$reading_process_memory_all_versions = $memorys.getMatch($reading_process_memory, 'object_id', 'cf:machine_id', 'boot_id')");
+                        queryClient.executeQuery("$writing_process_memory_all_versions = $memorys.getMatch($writing_process_memory, 'object_id', 'cf:machine_id', 'boot_id')");
+                        queryClient.executeQuery("$reading_process_memory_all_versions = $memorys.getMatch($reading_process_memory, 'object_id', 'cf:machine_id', 'boot_id')");
 
-                queryClient.executeQuery("$writing_process_memory_path = $base.getPath($writing_process_memory_all_versions, $writing_process_memory_all_versions, 1, $paths, 1)");
-                queryClient.executeQuery("$reading_process_memory_path = $base.getPath($reading_process_memory_all_versions, $reading_process_memory_all_versions, 1, $paths, 1)");
+                        queryClient.executeQuery("$writing_process_memory_path = $base.getPath($writing_process_memory_all_versions, $writing_process_memory_all_versions, 1, $paths, 1)");
+                        queryClient.executeQuery("$reading_process_memory_path = $base.getPath($reading_process_memory_all_versions, $reading_process_memory_all_versions, 1, $paths, 1)");
 
-                // Adding argv vertices to process_memory vertices.
+                        // Adding argv vertices to process_memory vertices.
+                        
+                        queryClient.executeQuery("$writing_process_to_argv = $base.getPath($writing_process_memory_all_versions, $argvs, 1)");
+                        queryClient.executeQuery("$reading_process_to_argv = $base.getPath($reading_process_memory_all_versions, $argvs, 1)");
+
+                        // Cross-namespace provenance subgraph construction.
+                        queryClient.executeQuery("$subgraph = $crossnamespace_flow_0 + $crossnamespace_flow_1 + $connected_entities + $crossnamespace_path + $writing_task_to_writing_memory + $reading_memory_to_reading_task + $writing_process_memory_path + $reading_process_memory_path + $writing_process_to_argv + $reading_process_to_argv");
+                        queryClient.executeQuery("$subgraph = $subgraph.collapseEdge('relation_type')");
+
+                        queryClient.executeQuery("$transformed_subgraph = $subgraph.transform(MergeVertex,\"boot_id,cf:machine_id,object_id,pidns,ipcns,mntns,netns,cgroupns,utsns\")");
+                        queryClient.executeQuery("$transformed_subgraph = $transformed_subgraph.collapseEdge('relation_type')");
+
+                }
+
                 
-                queryClient.executeQuery("$writing_process_to_argv = $base.getPath($writing_process_memory_all_versions, $argvs, 1)");
-                queryClient.executeQuery("$reading_process_to_argv = $base.getPath($reading_process_memory_all_versions, $argvs, 1)");
-
-                // Cross-namespace provenance subgraph construction.
-                queryClient.executeQuery("$subgraph = $crossnamespace_flow_0 + $crossnamespace_flow_1 + $connected_entities + $crossnamespace_path + $writing_task_to_writing_memory + $reading_memory_to_reading_task + $writing_process_memory_path + $reading_process_memory_path + $writing_process_to_argv + $reading_process_to_argv");
-                queryClient.executeQuery("$subgraph = $subgraph.collapseEdge('relation_type')");
-
-                queryClient.executeQuery("$transformed_subgraph = $subgraph.transform(MergeVertex,\"boot_id,cf:machine_id,object_id,pidns,ipcns,mntns,netns,cgroupns,utsns\")");
-                queryClient.executeQuery("$transformed_subgraph = $transformed_subgraph.collapseEdge('relation_type')");
         }
 
 }
