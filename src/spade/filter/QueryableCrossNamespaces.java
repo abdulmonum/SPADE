@@ -214,7 +214,7 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                          *
                          * This is the same Graph class that is seen in Transformers
                          */
-                        final String symbol = "$transformed_graph"; // Name of the graph symbol to export
+                        final String symbol = "$transformed_subgraph"; // Name of the graph symbol to export
                         final boolean force = true; // Export even if graph is big
                         final boolean verify = false; // Do not verify the query response
                         final spade.core.Graph graph = queryClient.exportGraph(symbol, force, verify);
@@ -271,11 +271,19 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                                         readerConstraintList.set(total_reader_constraints, currentConstraint);
 
                                         total_reader_constraints++;
-
-                                        readerConstraint = "%reader_constraint" + String.valueOf(total_reader_constraints) + " =";
-                                        readerConstraintList.add(readerConstraint);
+					
+					// if(!((i+1) < readers.size())){
+						readerConstraint = "%reader_constraint" + String.valueOf(total_reader_constraints) + " =";
+                                        	readerConstraintList.add(readerConstraint);
+					// }
                                 }
                         }
+
+			if(readerConstraintList.get(total_reader_constraints).substring(readerConstraintList.get(total_reader_constraints).length() - 2).equals(" =")){
+                        	readerConstraintList.remove(total_reader_constraints);
+                        	total_reader_constraints--;
+
+                	}	
 
                         String lastConstraint = readerConstraintList.get(total_reader_constraints);
                         if(lastConstraint.substring(lastConstraint.length() - 3).equals("and")){
@@ -284,14 +292,20 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                                 readerConstraintList.set(total_reader_constraints, currentConstraint);
                         }
 			
+			logger.log(Level.INFO, "Reader constraint list: {0}", readerConstraintList);
+
 			// executing readers constraints
                         String chainedReaderConstraint = "";
-                        for(int i = 0; i < total_reader_constraints; i++){
+                        for(int i = 0; i <= total_reader_constraints; i++){
                                 queryClient.executeQuery(readerConstraintList.get(i));
                                 chainedReaderConstraint += "%reader_constraint" + String.valueOf(i) + " or ";
                         }
-                        chainedReaderConstraint = chainedReaderConstraint.substring(0, chainedReaderConstraint.length() - 4);
-
+			logger.log(Level.INFO, "Chained Reader Constraint: {0}", chainedReaderConstraint);
+			if(chainedReaderConstraint.length() > 0){
+				chainedReaderConstraint = chainedReaderConstraint.substring(0, chainedReaderConstraint.length() - 4);
+			}
+			
+			
                         // getting reader entities
                         queryClient.executeQuery("$crossnamespace_readers = $base.getVertex(" + chainedReaderConstraint + ")");
 
@@ -312,24 +326,31 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                 ArrayList<String> writerConstraintList = new ArrayList<String>();
                 writerConstraintList.add(writerConstraint);
 
-                int i = 0;
+                int iter = 0;
                 for(final TreeMap<String, String> writer : completeOtherWriters){
 			String currentConstraint = writerConstraintList.get(total_writer_constraints);
                         currentConstraint += " \"id\" == '" + writer.get("id") + "' and";
                         writerConstraintList.set(total_writer_constraints, currentConstraint);
 
-                        if((i != 0) && (i%6 == 0)){
+                        if((iter != 0) && (iter%6 == 0)){
                                 currentConstraint = writerConstraintList.get(total_writer_constraints);
                                 currentConstraint = currentConstraint.substring(0, currentConstraint.length() - 4);
                                 writerConstraintList.set(total_writer_constraints, currentConstraint);
 
                                 total_writer_constraints++;
-
+				
                                 writerConstraint = "%writer_constraint" + String.valueOf(total_writer_constraints) + " =";
                                 writerConstraintList.add(writerConstraint);
                         }
-                        i++;
+                        iter++;
 		}
+		if(writerConstraintList.get(total_writer_constraints).substring(writerConstraintList.get(total_writer_constraints).length() - 2).equals(" =")){
+			writerConstraintList.remove(total_writer_constraints);
+			total_writer_constraints--;
+		
+		}
+
+		logger.log(Level.INFO, "Writer constraint list: {0}", writerConstraintList);
 
                 String lastConstraint = writerConstraintList.get(total_writer_constraints);
                 if(lastConstraint.substring(lastConstraint.length() - 3).equals("and")){
@@ -340,11 +361,15 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 
                 // executing readers constraints
                 String chainedWriterConstraint = "";
-                for(int i = 0; i < total_writer_constraints; i++){
+                for(int i = 0; i <= total_writer_constraints; i++){
                         queryClient.executeQuery(writerConstraintList.get(i));
                         chainedWriterConstraint += "%writer_constraint" + String.valueOf(i) + " or ";
                 }
-                chainedWriterConstraint = chainedWriterConstraint.substring(0, chainedWriterConstraint.length() - 4);
+		if(chainedWriterConstraint.length() > 0){
+			chainedWriterConstraint = chainedWriterConstraint.substring(0, chainedWriterConstraint.length() - 4);
+		}
+
+		logger.log(Level.INFO, "Chained writer constraint: {0}", chainedWriterConstraint);
 
                 // getting reader entities
                 queryClient.executeQuery("$crossnamespace_writers = $base.getVertex(" + chainedWriterConstraint + ")");
