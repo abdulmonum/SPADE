@@ -219,35 +219,14 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                         ArrayList<String> readerAndWriter = new ArrayList<String>();
                         readerAndWriter.add(readerCrossnamespaceVariable);
                         readerAndWriter.add(writerCrossnamespaceVariable);
+                        readerAndWriter.add(graphName);
 
                         ENTITY_TO_READER_WRITER.put("$crossnamespace_entities" + templateName, readerAndWriter);
 
                         
                         
 
-                        /*
-                         * Export a graph
-                         *
-                         * Do not export big graphs because of memory constraint
-                         *
-                         * This is the same Graph class that is seen in Transformers
-                         */
-                        final String symbol = "$transformed_subgraph"; // Name of the graph symbol to export
-                        final boolean force = true; // Export even if graph is big
-                        final boolean verify = false; // Do not verify the query response
-                        final spade.core.Graph graph = queryClient.exportGraph(symbol, force, verify);
-
-                        // Exporting graph to a dot file
-                        String completeFilePath = ABSOLUTE_EXPORT_PATH + File.separator + graphName;
-                        Graph.exportGraphToFile(SaveGraph.Format.kDot, completeFilePath, graph);
-
-                        /*
-                         * Check size of graph
-                         */
-                        final GraphStatistic.Count count = queryClient.getGraphCount(symbol);
-                        if(count.getVertices() > 0 || count.getEdges() > 0){
-                                // Not empty
-                        }
+                        
                 }catch(Exception e){
                         logger.log(Level.WARNING, "Error in querying", e);
                 }
@@ -424,6 +403,7 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 
                         String crossnamespaceReaderVariable = readerAndWriter.get(0);
                         String crossnamespaceWriterVariable = readerAndWriter.get(1);
+                        String graphName = readerAndWriter.get(2);
 
                         // Group all process memory vertices which contain the namespace identifiers.
                         queryClient.executeQuery("$memorys = $base.getVertex(object_type = 'process_memory')");
@@ -469,6 +449,33 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 
                         queryClient.executeQuery("$transformed_subgraph = $subgraph.transform(MergeVertex,\"boot_id,cf:machine_id,object_id,pidns,ipcns,mntns,netns,cgroupns,utsns\")");
                         queryClient.executeQuery("$transformed_subgraph = $transformed_subgraph.collapseEdge('relation_type')");
+
+
+                        /*
+                         * Export a graph
+                         *
+                         * Do not export big graphs because of memory constraint
+                         *
+                         * This is the same Graph class that is seen in Transformers
+                         */
+                        final String symbol = "$transformed_subgraph"; // Name of the graph symbol to export
+                        final boolean force = true; // Export even if graph is big
+                        final boolean verify = false; // Do not verify the query response
+                        final spade.core.Graph graph = queryClient.exportGraph(symbol, force, verify);
+
+                        // Exporting graph to a dot file
+                        String completeFilePath = ABSOLUTE_EXPORT_PATH + File.separator + graphName;
+                        Graph.exportGraphToFile(SaveGraph.Format.kDot, completeFilePath, graph);
+
+                        /*
+                         * Check size of graph
+                         */
+                        final GraphStatistic.Count count = queryClient.getGraphCount(symbol);
+                        if(count.getVertices() > 0 || count.getEdges() > 0){
+                                // Not empty
+                        }
+
+                        queryClient.executeQuery("erase $connected_entities $crossnamespace_flow_0 $crossnamespace_flow_1 $crossnamespace_path_vertices $crossnamespace_path $writing_process_memory $reading_process_memory $writing_task_to_writing_memory $reading_memory_to_reading_task $reading_memory_to_reading_task $writing_process_memory_all_versions $reading_process_memory_all_versions $writing_process_memory_path $reading_process_memory_path $writing_process_to_argv $reading_process_to_argv $subgraph $transformed_subgraph");
 
                 }
 
