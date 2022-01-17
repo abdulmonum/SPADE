@@ -258,7 +258,7 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                         // executing readers constraints
                         String chainedReaderConstraint = "";
                         int total_reader_constraints = readerConstraintList.size();
-                        for(int i = 0; i <= total_reader_constraints; i++){
+                        for(int i = 0; i < total_reader_constraints; i++){
                                 queryClient.executeQuery(readerConstraintList.get(i));
                                 chainedReaderConstraint += "%reader_constraint" + String.valueOf(i) + " or ";
                         }
@@ -347,7 +347,7 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                         // executing readers constraints
                         String chainedWriterConstraint = "";
                         int total_writer_constraints = writerConstraintList.size();
-                        for(int i = 0; i <= total_writer_constraints; i++){
+                        for(int i = 0; i < total_writer_constraints; i++){
                                 queryClient.executeQuery(writerConstraintList.get(i));
                                 chainedWriterConstraint += "%writer_constraint" + String.valueOf(i) + " or ";
                         }
@@ -402,7 +402,7 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 		
 		}
 
-		logger.log(Level.INFO, "Writer constraint list: {0}", writerConstraintList);
+		
 
                 String lastConstraint = writerConstraintList.get(total_writer_constraints);
                 if(lastConstraint.substring(lastConstraint.length() - 3).equals("and")){
@@ -410,6 +410,8 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                         currentConstraint = currentConstraint.substring(0, currentConstraint.length() - 4);
                         writerConstraintList.set(total_writer_constraints, currentConstraint);
                 }
+
+                logger.log(Level.INFO, "Writer constraint list: {0}", writerConstraintList);
                 
                 return writerConstraintList;
         }
