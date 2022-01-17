@@ -209,7 +209,7 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
                         queryClient.executeQuery("$crossnamespace_entities"+ templateName +" = $base.getVertex(%entity_constraint)");
 
 			// --- crossnamespace readers ---
-			ArrayList<String> readerConstraintList = getReaderConstraintList(readEdge, graphName);
+			ArrayList<String> readerConstraintList = getReaderConstraintList(readerProcessVertex, graphName);
                         String readerCrossnamespaceVariable = makeReaderEntitiesCamflow(readerConstraintList, templateName);
 
                         // --- crossnamespace writers ---
@@ -257,7 +257,7 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 		
 	}
 
-        public ArrayList<String> getReaderConstraintList(AbstractEdge readEdge, String graphName){
+        public ArrayList<String> getReaderConstraintList(AbstractVertex readerProcessVertex, String graphName){
                 // --- reader constraint ---
                 // adding artifact and reader to map
 
@@ -265,10 +265,10 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 
                 if(readers == null){
                         readers = new ArrayList<String>();
-                        readers.add(readEdge.getAnnotation("id"));
+                        readers.add(readerProcessVertex.getAnnotation("id"));
                         ARTIFACT_READERS_MAP.put(graphName, readers);
                 } else{
-                        readers.add(readEdge.getAnnotation("id"));
+                        readers.add(readerProcessVertex.getAnnotation("id"));
                         ARTIFACT_READERS_MAP.put(graphName, readers);
                 }
 
