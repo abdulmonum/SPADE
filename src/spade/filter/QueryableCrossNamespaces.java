@@ -397,86 +397,92 @@ public class QueryableCrossNamespaces extends CrossNamespaces{
 
         public void remainingQueriesCamflow(){
 
-                for (Map.Entry<String,ArrayList<String>> mapElement : ENTITY_TO_READER_WRITER.entrySet()){
-                        String crossnamespaceEntityVariable = mapElement.getKey();
-                        ArrayList<String> readerAndWriter = mapElement.getValue();
+                try{
 
-                        String crossnamespaceReaderVariable = readerAndWriter.get(0);
-                        String crossnamespaceWriterVariable = readerAndWriter.get(1);
-                        String graphName = readerAndWriter.get(2);
-
-                        // Group all process memory vertices which contain the namespace identifiers.
-                        queryClient.executeQuery("$memorys = $base.getVertex(object_type = 'process_memory')");
-                        // Group all task vertices which contain the process identifiers. Tasks are connected to process memory vertices.
-                        queryClient.executeQuery("$tasks = $base.getVertex(object_type = 'task')");
-                        // Group all files vertices which represent an inode. Tasks are connected to files by 'relation_type'='read' or 'relation_type'='write'.
-                        queryClient.executeQuery("$files = $base.getVertex(object_type = 'file')");
-                        // Group all path vertices which contain the path of an inode in the filesystem. Files are connected to paths.
-                        queryClient.executeQuery("$paths = $base.getVertex(object_type = 'path')");
-                        // Group all argv vertices which contain the argument passed to a process.
-                        queryClient.executeQuery("$argvs = $base.getVertex(object_type = 'argv')");
-
-
-                        // Construct crossnamespace path
-                        queryClient.executeQuery("$connected_entities = $base.getPath("+ crossnamespaceEntityVariable +", "+ crossnamespaceEntityVariable +", 1)");
-                        queryClient.executeQuery("$crossnamespace_flow_0 = $base.getPath(" + crossnamespaceReaderVariable + ", " + crossnamespaceEntityVariable + ", 1)");
-                        queryClient.executeQuery("$crossnamespace_flow_1 = $base.getPath(" + crossnamespaceEntityVariable + ", " + crossnamespaceWriterVariable + ", 1)");
-
-                        queryClient.executeQuery("$crossnamespace_path_vertices = $base.getPath(" + crossnamespaceEntityVariable + ", $paths, 1) & $paths");
-                        queryClient.executeQuery("$crossnamespace_path = $base.getPath($connected_entities, $crossnamespace_path_vertices, 1)");
-
-
-                        // Adding process_memory vertices to writing and reading tasks.
-                        queryClient.executeQuery("$writing_process_memory = $base.getLineage(" + crossnamespaceWriterVariable + ", 1, 'a') & $memorys");
-                        queryClient.executeQuery("$reading_process_memory = $base.getLineage(" + crossnamespaceReaderVariable + ", 1, 'd') & $memorys");
-                        queryClient.executeQuery("$writing_task_to_writing_memory = $base.getPath(" + crossnamespaceWriterVariable + ", $writing_process_memory, 1)");
-                        queryClient.executeQuery("$reading_memory_to_reading_task = $base.getPath($reading_process_memory, " + crossnamespaceReaderVariable + ", 1)");
-
-                        queryClient.executeQuery("$writing_process_memory_all_versions = $memorys.getMatch($writing_process_memory, 'object_id', 'cf:machine_id', 'boot_id')");
-                        queryClient.executeQuery("$reading_process_memory_all_versions = $memorys.getMatch($reading_process_memory, 'object_id', 'cf:machine_id', 'boot_id')");
-
-                        queryClient.executeQuery("$writing_process_memory_path = $base.getPath($writing_process_memory_all_versions, $writing_process_memory_all_versions, 1, $paths, 1)");
-                        queryClient.executeQuery("$reading_process_memory_path = $base.getPath($reading_process_memory_all_versions, $reading_process_memory_all_versions, 1, $paths, 1)");
-
-                        // Adding argv vertices to process_memory vertices.
                         
-                        queryClient.executeQuery("$writing_process_to_argv = $base.getPath($writing_process_memory_all_versions, $argvs, 1)");
-                        queryClient.executeQuery("$reading_process_to_argv = $base.getPath($reading_process_memory_all_versions, $argvs, 1)");
+                        for (Map.Entry<String,ArrayList<String>> mapElement : ENTITY_TO_READER_WRITER.entrySet()){
+                                String crossnamespaceEntityVariable = mapElement.getKey();
+                                ArrayList<String> readerAndWriter = mapElement.getValue();
 
-                        // Cross-namespace provenance subgraph construction.
-                        queryClient.executeQuery("$subgraph = $crossnamespace_flow_0 + $crossnamespace_flow_1 + $connected_entities + $crossnamespace_path + $writing_task_to_writing_memory + $reading_memory_to_reading_task + $writing_process_memory_path + $reading_process_memory_path + $writing_process_to_argv + $reading_process_to_argv");
-                        queryClient.executeQuery("$subgraph = $subgraph.collapseEdge('relation_type')");
+                                String crossnamespaceReaderVariable = readerAndWriter.get(0);
+                                String crossnamespaceWriterVariable = readerAndWriter.get(1);
+                                String graphName = readerAndWriter.get(2);
 
-                        queryClient.executeQuery("$transformed_subgraph = $subgraph.transform(MergeVertex,\"boot_id,cf:machine_id,object_id,pidns,ipcns,mntns,netns,cgroupns,utsns\")");
-                        queryClient.executeQuery("$transformed_subgraph = $transformed_subgraph.collapseEdge('relation_type')");
+                                // Group all process memory vertices which contain the namespace identifiers.
+                                queryClient.executeQuery("$memorys = $base.getVertex(object_type = 'process_memory')");
+                                // Group all task vertices which contain the process identifiers. Tasks are connected to process memory vertices.
+                                queryClient.executeQuery("$tasks = $base.getVertex(object_type = 'task')");
+                                // Group all files vertices which represent an inode. Tasks are connected to files by 'relation_type'='read' or 'relation_type'='write'.
+                                queryClient.executeQuery("$files = $base.getVertex(object_type = 'file')");
+                                // Group all path vertices which contain the path of an inode in the filesystem. Files are connected to paths.
+                                queryClient.executeQuery("$paths = $base.getVertex(object_type = 'path')");
+                                // Group all argv vertices which contain the argument passed to a process.
+                                queryClient.executeQuery("$argvs = $base.getVertex(object_type = 'argv')");
 
 
-                        /*
-                         * Export a graph
-                         *
-                         * Do not export big graphs because of memory constraint
-                         *
-                         * This is the same Graph class that is seen in Transformers
-                         */
-                        final String symbol = "$transformed_subgraph"; // Name of the graph symbol to export
-                        final boolean force = true; // Export even if graph is big
-                        final boolean verify = false; // Do not verify the query response
-                        final spade.core.Graph graph = queryClient.exportGraph(symbol, force, verify);
+                                // Construct crossnamespace path
+                                queryClient.executeQuery("$connected_entities = $base.getPath("+ crossnamespaceEntityVariable +", "+ crossnamespaceEntityVariable +", 1)");
+                                queryClient.executeQuery("$crossnamespace_flow_0 = $base.getPath(" + crossnamespaceReaderVariable + ", " + crossnamespaceEntityVariable + ", 1)");
+                                queryClient.executeQuery("$crossnamespace_flow_1 = $base.getPath(" + crossnamespaceEntityVariable + ", " + crossnamespaceWriterVariable + ", 1)");
 
-                        // Exporting graph to a dot file
-                        String completeFilePath = ABSOLUTE_EXPORT_PATH + File.separator + graphName;
-                        Graph.exportGraphToFile(SaveGraph.Format.kDot, completeFilePath, graph);
+                                queryClient.executeQuery("$crossnamespace_path_vertices = $base.getPath(" + crossnamespaceEntityVariable + ", $paths, 1) & $paths");
+                                queryClient.executeQuery("$crossnamespace_path = $base.getPath($connected_entities, $crossnamespace_path_vertices, 1)");
 
-                        /*
-                         * Check size of graph
-                         */
-                        final GraphStatistic.Count count = queryClient.getGraphCount(symbol);
-                        if(count.getVertices() > 0 || count.getEdges() > 0){
-                                // Not empty
+
+                                // Adding process_memory vertices to writing and reading tasks.
+                                queryClient.executeQuery("$writing_process_memory = $base.getLineage(" + crossnamespaceWriterVariable + ", 1, 'a') & $memorys");
+                                queryClient.executeQuery("$reading_process_memory = $base.getLineage(" + crossnamespaceReaderVariable + ", 1, 'd') & $memorys");
+                                queryClient.executeQuery("$writing_task_to_writing_memory = $base.getPath(" + crossnamespaceWriterVariable + ", $writing_process_memory, 1)");
+                                queryClient.executeQuery("$reading_memory_to_reading_task = $base.getPath($reading_process_memory, " + crossnamespaceReaderVariable + ", 1)");
+
+                                queryClient.executeQuery("$writing_process_memory_all_versions = $memorys.getMatch($writing_process_memory, 'object_id', 'cf:machine_id', 'boot_id')");
+                                queryClient.executeQuery("$reading_process_memory_all_versions = $memorys.getMatch($reading_process_memory, 'object_id', 'cf:machine_id', 'boot_id')");
+
+                                queryClient.executeQuery("$writing_process_memory_path = $base.getPath($writing_process_memory_all_versions, $writing_process_memory_all_versions, 1, $paths, 1)");
+                                queryClient.executeQuery("$reading_process_memory_path = $base.getPath($reading_process_memory_all_versions, $reading_process_memory_all_versions, 1, $paths, 1)");
+
+                                // Adding argv vertices to process_memory vertices.
+                                
+                                queryClient.executeQuery("$writing_process_to_argv = $base.getPath($writing_process_memory_all_versions, $argvs, 1)");
+                                queryClient.executeQuery("$reading_process_to_argv = $base.getPath($reading_process_memory_all_versions, $argvs, 1)");
+
+                                // Cross-namespace provenance subgraph construction.
+                                queryClient.executeQuery("$subgraph = $crossnamespace_flow_0 + $crossnamespace_flow_1 + $connected_entities + $crossnamespace_path + $writing_task_to_writing_memory + $reading_memory_to_reading_task + $writing_process_memory_path + $reading_process_memory_path + $writing_process_to_argv + $reading_process_to_argv");
+                                queryClient.executeQuery("$subgraph = $subgraph.collapseEdge('relation_type')");
+
+                                queryClient.executeQuery("$transformed_subgraph = $subgraph.transform(MergeVertex,\"boot_id,cf:machine_id,object_id,pidns,ipcns,mntns,netns,cgroupns,utsns\")");
+                                queryClient.executeQuery("$transformed_subgraph = $transformed_subgraph.collapseEdge('relation_type')");
+
+
+                                /*
+                                * Export a graph
+                                *
+                                * Do not export big graphs because of memory constraint
+                                *
+                                * This is the same Graph class that is seen in Transformers
+                                */
+                                final String symbol = "$transformed_subgraph"; // Name of the graph symbol to export
+                                final boolean force = true; // Export even if graph is big
+                                final boolean verify = false; // Do not verify the query response
+                                final spade.core.Graph graph = queryClient.exportGraph(symbol, force, verify);
+
+                                // Exporting graph to a dot file
+                                String completeFilePath = ABSOLUTE_EXPORT_PATH + File.separator + graphName;
+                                Graph.exportGraphToFile(SaveGraph.Format.kDot, completeFilePath, graph);
+
+                                /*
+                                * Check size of graph
+                                */
+                                final GraphStatistic.Count count = queryClient.getGraphCount(symbol);
+                                if(count.getVertices() > 0 || count.getEdges() > 0){
+                                        // Not empty
+                                }
+
+                                queryClient.executeQuery("erase $connected_entities $crossnamespace_flow_0 $crossnamespace_flow_1 $crossnamespace_path_vertices $crossnamespace_path $writing_process_memory $reading_process_memory $writing_task_to_writing_memory $reading_memory_to_reading_task $reading_memory_to_reading_task $writing_process_memory_all_versions $reading_process_memory_all_versions $writing_process_memory_path $reading_process_memory_path $writing_process_to_argv $reading_process_to_argv $subgraph $transformed_subgraph");
+
                         }
-
-                        queryClient.executeQuery("erase $connected_entities $crossnamespace_flow_0 $crossnamespace_flow_1 $crossnamespace_path_vertices $crossnamespace_path $writing_process_memory $reading_process_memory $writing_task_to_writing_memory $reading_memory_to_reading_task $reading_memory_to_reading_task $writing_process_memory_all_versions $reading_process_memory_all_versions $writing_process_memory_path $reading_process_memory_path $writing_process_to_argv $reading_process_to_argv $subgraph $transformed_subgraph");
-
+                }catch(Exception e){
+                        logger.log(Level.WARNING, "Error in querying", e);
                 }
 
                 
