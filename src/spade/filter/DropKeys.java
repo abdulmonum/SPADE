@@ -21,6 +21,7 @@
 package spade.filter;
 
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Level;
@@ -29,6 +30,7 @@ import java.util.logging.Logger;
 import spade.core.AbstractEdge;
 import spade.core.AbstractFilter;
 import spade.core.AbstractVertex;
+import spade.core.Settings;
 import spade.utility.HelperFunctions;
 
 /**
@@ -48,48 +50,85 @@ import spade.utility.HelperFunctions;
 public class DropKeys extends AbstractFilter{
 
 	private Logger logger = Logger.getLogger(this.getClass().getName());
+
+	private static final String
+		keyEdgeDropKeys = "EdgeDropKeys",
+		keyVertexDropKeys = "VertexDropKeys",
+		keyKeepOriginalID = "KeepOriginalID";
 	
-	private Set<String> keysToDrop = new HashSet<String>(); 
+	private Set<String> edgeDropKeys = new HashSet<String>();
+	private Set<String> vertexDropKeys = new HashSet<String>();
+
+	private Boolean keepOriginalID; 
+	
+	// private Set<String> keysToDrop = new HashSet<String>(); 
 	
 	public boolean initialize(String arguments){
-		
-		//Must not be null or empty
-		if(arguments == null || arguments.trim().isEmpty()){
-			logger.log(Level.WARNING, "Must specify 'keys' argument");
+		Map<String, String> configMap;
+		final String configFilePath = Settings.getDefaultConfigFilePath(this.getClass());
+
+		try{
+			configMap = HelperFunctions.parseKeyValuePairsFrom(arguments, new String[]{configFilePath});
+			
+			if(configMap == null){
+				throw new Exception("NULL config map read");
+			}
+		}
+		catch (Exception e){
+			logger.log(Level.SEVERE, "Failed to read config file", e);
+			return false;
+		}
+
+		if(configMap.get(keyEdgeDropKeys) == null || configMap.get(keyEdgeDropKeys).trim().isEmpty() || configMap.get(keyVertexDropKeys) == null || configMap.get(keyVertexDropKeys).trim().isEmpty()){
+			logger.log(Level.WARNING, "Must specify 'EdgeDropKeys' and 'VertexDropKeys' argument");
+			return false;
+		}else if(configMap.get(keyKeepOriginalID) == null || !(configMap.get(keyKeepOriginalID).equals("true") || configMap.get(keyKeepOriginalID).equals("false"))){
+			logger.log(Level.WARNING, "Must specify 'KeepOriginalID' argument as either true or false");
 			return false;
 		}else{
-				
-			Map<String, String> argsMap = HelperFunctions.parseKeyValPairs(arguments);
-			
-			//Must have 'keys' argument
-			if(argsMap.get("keys") == null){
-				logger.log(Level.WARNING, "Must specify 'keys' argument. Invalid arguments");
-				return false;
-			}else{
-				String keys = argsMap.get("keys");
-				//'keys' argument must not be empty
-				if(keys == null || keys.trim().isEmpty()){
-					logger.log(Level.WARNING, "Must specify valid 'keys' argument value. Invalid arguments");
+			String [] keyTokens = configMap.get(keyEdgeDropKeys).split(",");
+			for(String keyToken : keyTokens){
+				if(keyToken.trim().isEmpty()){
+					logger.log(Level.WARNING, "Empty key in 'EdgeDropKeys' argument. Invalid arguments");
 					return false;
 				}else{
-					String [] keyTokens = keys.split(",");
-					for(String keyToken : keyTokens){
-						if(keyToken.trim().isEmpty()){
-							//Must be non-empty annotation key name
-							logger.log(Level.WARNING, "Empty key in 'keys' argument. Invalid arguments");
-							return false;
-						}else{
-							keyToken = keyToken.trim();
-							//Must not be 'type'
-							if(keyToken.equals("type")){
-								logger.log(Level.WARNING, "Cannot remove 'type' key. Invalid arguments");
-								return false;
-							}else{
-								keysToDrop.add(keyToken);
-							}
-						}
+					keyToken = keyToken.trim();
+					//Must not be 'type'
+					if(keyToken.equals("type")){
+						logger.log(Level.WARNING, "Cannot remove 'type' key. Invalid arguments");
+						return false;
+					}else{
+						edgeDropKeys.add(keyToken);
 					}
 				}
+			}
+
+
+			keyTokens = configMap.get(keyVertexDropKeys).split(",");
+			for(String keyToken : keyTokens){
+				if(keyToken.trim().isEmpty()){
+					logger.log(Level.WARNING, "Empty key in 'EdgeDropKeys' argument. Invalid arguments");
+					return false;
+				}else{
+					keyToken = keyToken.trim();
+					//Must not be 'type'
+					if(keyToken.equals("type")){
+						logger.log(Level.WARNING, "Cannot remove 'type' key. Invalid arguments");
+						return false;
+					}else{
+						vertexDropKeys.add(keyToken);
+					}
+				}
+			}
+
+
+			if(configMap.get(keyKeepOriginalID).equals("true")){
+				keepOriginalID = true;
+			}else if(configMap.get(keyKeepOriginalID).equals("false")){
+				keepOriginalID = false;
+			}else{
+				logger.log(Level.WARNING, "Must specify 'KeepOriginalID' argument as either true or false");
+				return false;
 			}
 		}
 		
@@ -99,23 +138,55 @@ public class DropKeys extends AbstractFilter{
 
 	@Override
 	public void putVertex(AbstractVertex incomingVertex) {
-		if(incomingVertex != null){
-			AbstractVertex vertexCopy = createCopyWithoutKeys(incomingVertex, keysToDrop);
-			if(vertexCopy != null){
-				putInNextFilter(vertexCopy);
+
+		if(keepOriginalID){
+			if(incomingVertex != null){
+				AbstractVertex vertexCopy = createCopyWithoutKeys(incomingVertex, vertexDropKeys);
+				if(vertexCopy != null){
+					putInNextFilter(vertexCopy);
+				}
+			}else{
+				logger.log(Level.WARNING, "Null vertex");
 			}
 		}else{
-			logger.log(Level.WARNING, "Null vertex");
+			AbstractVertex newVertex = new AbstractVertex();
+
+			Map<String, String> newAnnotations = new HashMap<String, String>(); 
+
+			for (String vertexDropKey : vertexDropKeys) {
+				newAnnotations.put(vertexDropKey, incomingVertex.getAnnotation(vertexDropKey));
+			}
+
+			newVertex.addAnnotations(newAnnotations);
+
+			putInNextFilter(newVertex);		
 		}
+		
 	}
 
 	@Override
 	public void putEdge(AbstractEdge incomingEdge) {
 		if(incomingEdge != null && incomingEdge.getChildVertex() != null && incomingEdge.getParentVertex() != null){
-			AbstractEdge edgeCopy = createCopyWithoutKeys(incomingEdge, keysToDrop);
-			if(edgeCopy != null){
-				putInNextFilter(edgeCopy);
+			if(keepOriginalID){
+				AbstractEdge edgeCopy = createCopyWithoutKeys(incomingEdge, edgeDropKeys);
+				if(edgeCopy != null){
+					putInNextFilter(edgeCopy);
+				}
+			}else{
+				AbstractEdge newEdge = new AbstractEdge();
+
+				Map<String, String> newAnnotations = new HashMap<String, String>(); 
+
+				for (String edgeDropKey : edgeDropKeys) {
+					newAnnotations.put(edgeDropKey, incomingEdge.getAnnotation(edgeDropKey));
+				}
+
+				newEdge.addAnnotations(newAnnotations);
+
+				putInNextFilter(newEdge);
 			}
+
+
 		}else{
 			logger.log(Level.WARNING, "Invalid edge: {0}, source: {1}, destination: {2}", new Object[]{
 					incomingEdge, 
