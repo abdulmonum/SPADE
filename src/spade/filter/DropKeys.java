@@ -28,6 +28,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import spade.core.AbstractEdge;
+import spade.core.Vertex;
+import spade.core.Edge;
 import spade.core.AbstractFilter;
 import spade.core.AbstractVertex;
 import spade.core.Settings;
@@ -149,12 +151,16 @@ public class DropKeys extends AbstractFilter{
 				logger.log(Level.WARNING, "Null vertex");
 			}
 		}else{
-			AbstractVertex newVertex = new AbstractVertex();
+			AbstractVertex newVertex = new Vertex();
 
 			Map<String, String> newAnnotations = new HashMap<String, String>(); 
+			
+			Set<String> annotationKeys = incomingVertex.getAnnotationKeys();
 
-			for (String vertexDropKey : vertexDropKeys) {
-				newAnnotations.put(vertexDropKey, incomingVertex.getAnnotation(vertexDropKey));
+			for (String key : annotationKeys) {
+				if(!vertexDropKeys.contains(key)){
+					newAnnotations.put(key, incomingVertex.getAnnotation(key));				
+				}
 			}
 
 			newVertex.addAnnotations(newAnnotations);
@@ -173,13 +179,17 @@ public class DropKeys extends AbstractFilter{
 					putInNextFilter(edgeCopy);
 				}
 			}else{
-				AbstractEdge newEdge = new AbstractEdge();
+				AbstractEdge newEdge = new Edge(incomingEdge.getChildVertex(), incomingEdge.getParentVertex());
 
 				Map<String, String> newAnnotations = new HashMap<String, String>(); 
 
-				for (String edgeDropKey : edgeDropKeys) {
-					newAnnotations.put(edgeDropKey, incomingEdge.getAnnotation(edgeDropKey));
-				}
+				Set<String> annotationKeys = incomingEdge.getAnnotationKeys();
+
+                        	for (String key : annotationKeys) {
+                                	if(!edgeDropKeys.contains(key)){
+                                        	newAnnotations.put(key, incomingEdge.getAnnotation(key));                    
+                                	}
+                        	}    
 
 				newEdge.addAnnotations(newAnnotations);
 
