@@ -151,19 +151,7 @@ public class DropKeys extends AbstractFilter{
 				logger.log(Level.WARNING, "Null vertex");
 			}
 		}else{
-			AbstractVertex newVertex = new Vertex();
-
-			Map<String, String> newAnnotations = new HashMap<String, String>(); 
-			
-			Set<String> annotationKeys = incomingVertex.getAnnotationKeys();
-
-			for (String key : annotationKeys) {
-				if(!vertexDropKeys.contains(key)){
-					newAnnotations.put(key, incomingVertex.getAnnotation(key));				
-				}
-			}
-
-			newVertex.addAnnotations(newAnnotations);
+			AbstractVertex newVertex = createNewVertexWithoutRef(incomingVertex);
 
 			putInNextFilter(newVertex);		
 		}
@@ -179,19 +167,23 @@ public class DropKeys extends AbstractFilter{
 					putInNextFilter(edgeCopy);
 				}
 			}else{
-				AbstractEdge newEdge = new Edge(incomingEdge.getChildVertex(), incomingEdge.getParentVertex());
+				AbstractEdge newEdge = new Edge(createNewVertexWithoutRef(incomingEdge.getChildVertex()), createNewVertexWithoutRef(incomingEdge.getParentVertex()));
 
 				Map<String, String> newAnnotations = new HashMap<String, String>(); 
 
 				Set<String> annotationKeys = incomingEdge.getAnnotationKeys();
 
-                        	for (String key : annotationKeys) {
-                                	if(!edgeDropKeys.contains(key)){
-                                        	newAnnotations.put(key, incomingEdge.getAnnotation(key));                    
-                                	}
-                        	}    
+				for (String key : annotationKeys) {
+					if(!edgeDropKeys.contains(key) && !key.equals("id")){
+						newAnnotations.put(key, incomingEdge.getAnnotation(key));                    
+					}
+				}    
+				
+				
 
 				newEdge.addAnnotations(newAnnotations);
+
+				newEdge.addAnnotation("id", newEdge.bigHashCode());
 
 				putInNextFilter(newEdge);
 			}
@@ -204,6 +196,28 @@ public class DropKeys extends AbstractFilter{
 					incomingEdge == null ? null : incomingEdge.getParentVertex()
 			});
 		}
+	}
+
+
+
+	private AbstractVertex createNewVertexWithoutRef(AbstractVertex incomingVertex){
+		AbstractVertex newVertex = new Vertex();
+		
+		Map<String, String> newAnnotations = new HashMap<String, String>(); 
+			
+		Set<String> annotationKeys = incomingVertex.getAnnotationKeys();
+
+		for (String key : annotationKeys) {
+			if(!vertexDropKeys.contains(key) && !key.equals("id")){
+				newAnnotations.put(key, incomingVertex.getAnnotation(key));				
+			}
+		}
+		
+		newVertex.addAnnotations(newAnnotations);
+
+		newVertex.addAnnotation("id", newVertex.bigHashCode());
+
+		return newVertex;
 	}
 	
 	/**
